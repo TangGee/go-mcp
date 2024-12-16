@@ -5,15 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 )
-
-type mockWriter struct {
-	sync.Mutex
-	written []byte
-}
 
 type mockPromptServer struct {
 	listPromptsCalled bool
@@ -38,53 +32,6 @@ type mockToolServer struct {
 	toolName        string
 }
 
-type mockServer struct{}
-
-func TestNewSessionDispatcher(t *testing.T) {
-	tests := []struct {
-		name     string
-		options  []ServerOption
-		expected ServerCapabilities
-	}{
-		{
-			name:     "empty dispatcher",
-			options:  nil,
-			expected: ServerCapabilities{},
-		},
-		{
-			name: "with prompt server",
-			options: []ServerOption{
-				WithPromptServer(&mockPromptServer{}),
-			},
-			expected: ServerCapabilities{
-				Prompts: &PromptsCapability{},
-			},
-		},
-		{
-			name: "with prompt server and watcher",
-			options: []ServerOption{
-				WithPromptServer(&mockPromptServer{}),
-				WithPromptListWatcher(&mockPromptListWatcher{}),
-			},
-			expected: ServerCapabilities{
-				Prompts: &PromptsCapability{
-					ListChanged: true,
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			server := &mockServer{}
-			dispatcher := newSessionDispatcher(server, tt.options...)
-			if !reflect.DeepEqual(tt.expected, dispatcher.capabilities) {
-				t.Errorf("got capabilities %+v, want %+v", dispatcher.capabilities, tt.expected)
-			}
-		})
-	}
-}
-
 func TestSessionHandlePing(t *testing.T) {
 	writer := &mockWriter{}
 	sess := &session{
@@ -92,6 +39,7 @@ func TestSessionHandlePing(t *testing.T) {
 		ctx:          context.Background(),
 		writter:      writer,
 		writeTimeout: time.Second,
+		pingInterval: time.Second,
 	}
 
 	err := sess.handlePing("1")
@@ -165,93 +113,18 @@ func TestSessionHandleInitialize(t *testing.T) {
 	}
 }
 
-func TestSessionDispatcherStart(t *testing.T) {
-	server := &mockServer{}
-	dispatcher := newSessionDispatcher(server, WithWriteTimeout(time.Second))
-
-	dispatcher.start()
-
-	if dispatcher.sessionStopChan == nil {
-		t.Error("sessionStopChan is nil")
-	}
-	if dispatcher.closeChan == nil {
-		t.Error("closeChan is nil")
-	}
-
-	// Clean up
-	dispatcher.stop()
-}
-
-func TestSessionDispatcherHandleMsg(t *testing.T) {
-	writer := &mockWriter{}
-	sess := &session{
-		id:           "test-session",
-		ctx:          context.Background(),
-		writter:      writer,
-		writeTimeout: time.Second,
-	}
-
-	server := &mockServer{}
-	dispatcher := newSessionDispatcher(server, WithWriteTimeout(time.Second))
-	dispatcher.sessions.Store(sess.id, sess)
-
-	// Test ping message
-	pingMsg := `{"jsonrpc": "2.0", "method": "ping", "id": "1"}`
-	err := dispatcher.handleMsg(bytes.NewReader([]byte(pingMsg)), sess.id)
-	if err != nil {
-		t.Fatalf("handleMsg failed: %v", err)
-	}
-
-	var response jsonRPCMessage
-	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
-	if err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if response.ID != MustString("1") {
-		t.Errorf("got ID %v, want 1", response.ID)
-	}
-}
-
-func TestSessionDispatcherStartSession(t *testing.T) {
-	dispatcher := sessionDispatcher{
-		sessions:        &sync.Map{},
-		progresses:      &sync.Map{},
-		sessionStopChan: make(chan string),
-		closeChan:       make(chan struct{}),
-		writeTimeout:    time.Second,
-	}
-
-	writer := &mockWriter{}
-	ctx := context.Background()
-
-	dispatcher.startSession(ctx, writer)
-
-	var sessionCount int
-	dispatcher.sessions.Range(func(_, _ interface{}) bool {
-		sessionCount++
-		return true
-	})
-
-	if sessionCount != 1 {
-		t.Errorf("got %d sessions, want 1", sessionCount)
-	}
-
-	// Clean up
-	dispatcher.stop()
-}
-
 func TestSessionHandlePrompts(t *testing.T) {
 	writer := &mockWriter{}
 	promptServer := &mockPromptServer{}
 
-	server := &mockServer{}
-	dispatcher := newSessionDispatcher(server,
+	srv := &mockServer{}
+	s := newServer(srv,
 		WithPromptServer(promptServer),
 		WithWriteTimeout(time.Second),
 	)
-	sessID := dispatcher.startSession(context.Background(), writer)
+	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &dispatcher, sessID)
+	initSession(t, &s, sessID)
 
 	// Test ListPrompts
 	listParams := promptsListParams{
@@ -265,7 +138,7 @@ func TestSessionHandlePrompts(t *testing.T) {
 		Params:  listParamsBs,
 	}
 	listBs, _ := json.Marshal(listMsg)
-	err := dispatcher.handleMsg(bytes.NewReader(listBs), sessID)
+	err := s.handleMsg(bytes.NewReader(listBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -274,11 +147,25 @@ func TestSessionHandlePrompts(t *testing.T) {
 	}
 
 	// Test GetPrompt
-	//nolint:lll
-	getMsg := `
-{"jsonrpc": "2.0", "method": "prompts/get", "id": "2", "params": {"name": "test-prompt", "arguments": {}, "_meta": {"progressToken": "123"}}}
-`
-	err = dispatcher.handleMsg(bytes.NewReader([]byte(getMsg)), sessID)
+	//
+	getParams := promptsGetParams{
+		Name: "test-prompt",
+		Arguments: map[string]any{
+			"test-arg": "test-value",
+		},
+		Meta: paramsMeta{
+			ProgressToken: "123",
+		},
+	}
+	getParamsBs, _ := json.Marshal(getParams)
+	getMsg := jsonRPCMessage{
+		JSONRPC: jsonRPCVersion,
+		ID:      MustString("2"),
+		Method:  methodPromptsGet,
+		Params:  getParamsBs,
+	}
+	getBs, _ := json.Marshal(getMsg)
+	err = s.handleMsg(bytes.NewReader(getBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -291,14 +178,14 @@ func TestSessionHandleResources(t *testing.T) {
 	writer := &mockWriter{}
 	resourceServer := &mockResourceServer{}
 
-	server := &mockServer{}
-	dispatcher := newSessionDispatcher(server,
+	srv := &mockServer{}
+	s := newServer(srv,
 		WithResourceServer(resourceServer),
 		WithWriteTimeout(time.Second),
 	)
-	sessID := dispatcher.startSession(context.Background(), writer)
+	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &dispatcher, sessID)
+	initSession(t, &s, sessID)
 
 	// Test ListResources
 	listParams := resourcesListParams{
@@ -312,7 +199,7 @@ func TestSessionHandleResources(t *testing.T) {
 		Params:  listParamsBs,
 	}
 	listBs, _ := json.Marshal(listMsg)
-	err := dispatcher.handleMsg(bytes.NewReader(listBs), sessID)
+	err := s.handleMsg(bytes.NewReader(listBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -332,7 +219,7 @@ func TestSessionHandleResources(t *testing.T) {
 		Params:  readParamsBs,
 	}
 	readBs, _ := json.Marshal(readMsg)
-	err = dispatcher.handleMsg(bytes.NewReader(readBs), sessID)
+	err = s.handleMsg(bytes.NewReader(readBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -352,7 +239,7 @@ func TestSessionHandleResources(t *testing.T) {
 		Params:  subscribeParamsBs,
 	}
 	subscribeBs, _ := json.Marshal(subscribeMsg)
-	err = dispatcher.handleMsg(bytes.NewReader(subscribeBs), sessID)
+	err = s.handleMsg(bytes.NewReader(subscribeBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -368,14 +255,14 @@ func TestSessionHandleTools(t *testing.T) {
 	writer := &mockWriter{}
 	toolServer := &mockToolServer{}
 
-	server := &mockServer{}
-	dispatcher := newSessionDispatcher(server,
+	srv := &mockServer{}
+	s := newServer(srv,
 		WithToolServer(toolServer),
 		WithWriteTimeout(time.Second),
 	)
-	sessID := dispatcher.startSession(context.Background(), writer)
+	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &dispatcher, sessID)
+	initSession(t, &s, sessID)
 
 	// Test ListTools
 	listParams := jsonRPCMessage{
@@ -392,7 +279,7 @@ func TestSessionHandleTools(t *testing.T) {
 		Params:  listParamsBs,
 	}
 	listBs, _ := json.Marshal(listMsg)
-	err := dispatcher.handleMsg(bytes.NewReader(listBs), sessID)
+	err := s.handleMsg(bytes.NewReader(listBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -415,7 +302,7 @@ func TestSessionHandleTools(t *testing.T) {
 		Params:  callParamsBs,
 	}
 	callBs, _ := json.Marshal(callMsg)
-	err = dispatcher.handleMsg(bytes.NewReader(callBs), sessID)
+	err = s.handleMsg(bytes.NewReader(callBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -427,7 +314,7 @@ func TestSessionHandleTools(t *testing.T) {
 	}
 }
 
-func initSession(t *testing.T, dispatcher *sessionDispatcher, sessID string) {
+func initSession(t *testing.T, server *server, sessID string) {
 	// Initialize session
 	initParams := initializeParams{
 		ProtocolVersion: protocolVersion,
@@ -442,7 +329,7 @@ func initSession(t *testing.T, dispatcher *sessionDispatcher, sessID string) {
 		Params:  initParamsBs,
 	}
 	initBs, _ := json.Marshal(initMsg)
-	err := dispatcher.handleMsg(bytes.NewReader(initBs), sessID)
+	err := server.handleMsg(bytes.NewReader(initBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
@@ -452,23 +339,10 @@ func initSession(t *testing.T, dispatcher *sessionDispatcher, sessID string) {
 		ID:      MustString("2"),
 	}
 	initNotifBs, _ := json.Marshal(initNotifMsg)
-	err = dispatcher.handleMsg(bytes.NewReader(initNotifBs), sessID)
+	err = server.handleMsg(bytes.NewReader(initNotifBs), sessID)
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
-}
-
-func (w *mockWriter) Write(p []byte) (int, error) {
-	w.Lock()
-	defer w.Unlock()
-	w.written = append(w.written, p...)
-	return len(p), nil
-}
-
-func (w *mockWriter) getWritten() []byte {
-	w.Lock()
-	defer w.Unlock()
-	return w.written
 }
 
 func (m *mockPromptServer) ListPrompts(context.Context, string, MustString) (PromptList, error) {
@@ -548,12 +422,4 @@ func (m *mockToolServer) CallTool(_ context.Context, name string, _ map[string]a
 		Content: []Content{{Type: ContentTypeText, Text: "Tool executed"}},
 		IsError: false,
 	}, nil
-}
-
-func (m *mockServer) Info() Info {
-	return Info{Name: "test-server", Version: "1.0"}
-}
-
-func (m *mockServer) RequiredClientCapabilities() ClientCapabilities {
-	return ClientCapabilities{}
 }
