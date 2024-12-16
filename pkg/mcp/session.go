@@ -35,6 +35,7 @@ type sessionDispatcher struct {
 	progressReporter ProgressReporter
 
 	writeTimeout time.Duration
+	pingInterval time.Duration
 
 	sessionStopChan chan string
 	closeChan       chan struct{}
@@ -50,6 +51,7 @@ type session struct {
 	clientInfo         Info
 
 	writeTimeout time.Duration
+	pingInterval time.Duration
 
 	requests            sync.Map // map[requestID]clientRequest
 	subscribedResources sync.Map // map[uri]struct{}
@@ -73,6 +75,7 @@ type clientRequest struct {
 
 var (
 	defaultWriteTimeout = 30 * time.Second
+	defaultPingInterval = 30 * time.Second
 
 	errInvalidJSON     = errors.New("invalid json")
 	errSessionNotFound = errors.New("session not found")
@@ -124,6 +127,9 @@ func newSessionDispatcher(server Server, options ...ServerOption) sessionDispatc
 func (s sessionDispatcher) start() {
 	if s.writeTimeout == 0 {
 		s.writeTimeout = defaultWriteTimeout
+	}
+	if s.pingInterval == 0 {
+		s.pingInterval = defaultPingInterval
 	}
 
 	go s.listenStopSession()
@@ -285,6 +291,7 @@ func (s sessionDispatcher) startSession(ctx context.Context, w io.Writer) string
 		cancel:                 sCancel,
 		writter:                w,
 		writeTimeout:           s.writeTimeout,
+		pingInterval:           s.pingInterval,
 		stopChan:               s.sessionStopChan,
 		promptsListChan:        make(chan struct{}),
 		resourcesListChan:      make(chan struct{}),
@@ -482,6 +489,8 @@ func (s sessionDispatcher) stop() {
 }
 
 func (s *session) listen() {
+	pingTicker := time.NewTicker(s.pingInterval)
+
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -503,6 +512,8 @@ func (s *session) listen() {
 			_ = writeResult(s.ctx, s.writter, methodNotificationsMessage, params)
 		case params := <-s.progressChan:
 			_ = writeResult(s.ctx, s.writter, methodNotificationsProgress, params)
+		case <-pingTicker.C:
+			_ = writeResult(s.ctx, s.writter, methodPing, nil)
 		}
 	}
 }

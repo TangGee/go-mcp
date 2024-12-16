@@ -87,3 +87,10 @@ func WithWriteTimeout(timeout time.Duration) ServerOption {
 		s.writeTimeout = timeout
 	}
 }
+
+// WithPingInterval sets the ping interval for the server.
+func WithPingInterval(interval time.Duration) ServerOption {
+	return func(s *sessionDispatcher) {
+		s.pingInterval = interval
+	}
+}
