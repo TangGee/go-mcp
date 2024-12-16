@@ -81,7 +81,7 @@ func TestServerStart(t *testing.T) {
 
 func TestServerHandleMsg(t *testing.T) {
 	writer := &mockWriter{}
-	sess := &session{
+	sess := &serverSession{
 		id:           "test-session",
 		ctx:          context.Background(),
 		writter:      writer,

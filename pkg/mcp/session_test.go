@@ -32,9 +32,9 @@ type mockToolServer struct {
 	toolName        string
 }
 
-func TestSessionHandlePing(t *testing.T) {
+func TestServerSessionHandlePing(t *testing.T) {
 	writer := &mockWriter{}
-	sess := &session{
+	sess := &serverSession{
 		id:           "test-session",
 		ctx:          context.Background(),
 		writter:      writer,
@@ -64,9 +64,9 @@ func TestSessionHandlePing(t *testing.T) {
 	}
 }
 
-func TestSessionHandleInitialize(t *testing.T) {
+func TestServerSessionHandleInitialize(t *testing.T) {
 	writer := &mockWriter{}
-	sess := &session{
+	sess := &serverSession{
 		id:           "test-session",
 		ctx:          context.Background(),
 		writter:      writer,
@@ -113,7 +113,7 @@ func TestSessionHandleInitialize(t *testing.T) {
 	}
 }
 
-func TestSessionHandlePrompts(t *testing.T) {
+func TestServerSessionHandlePrompts(t *testing.T) {
 	writer := &mockWriter{}
 	promptServer := &mockPromptServer{}
 
@@ -124,7 +124,7 @@ func TestSessionHandlePrompts(t *testing.T) {
 	)
 	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &s, sessID)
+	initServerSession(t, &s, sessID)
 
 	// Test ListPrompts
 	listParams := promptsListParams{
@@ -147,7 +147,6 @@ func TestSessionHandlePrompts(t *testing.T) {
 	}
 
 	// Test GetPrompt
-	//
 	getParams := promptsGetParams{
 		Name: "test-prompt",
 		Arguments: map[string]any{
@@ -174,7 +173,7 @@ func TestSessionHandlePrompts(t *testing.T) {
 	}
 }
 
-func TestSessionHandleResources(t *testing.T) {
+func TestServerSessionHandleResources(t *testing.T) {
 	writer := &mockWriter{}
 	resourceServer := &mockResourceServer{}
 
@@ -185,7 +184,7 @@ func TestSessionHandleResources(t *testing.T) {
 	)
 	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &s, sessID)
+	initServerSession(t, &s, sessID)
 
 	// Test ListResources
 	listParams := resourcesListParams{
@@ -251,7 +250,7 @@ func TestSessionHandleResources(t *testing.T) {
 	}
 }
 
-func TestSessionHandleTools(t *testing.T) {
+func TestServerSessionHandleTools(t *testing.T) {
 	writer := &mockWriter{}
 	toolServer := &mockToolServer{}
 
@@ -262,7 +261,7 @@ func TestSessionHandleTools(t *testing.T) {
 	)
 	sessID := s.startSession(context.Background(), writer)
 
-	initSession(t, &s, sessID)
+	initServerSession(t, &s, sessID)
 
 	// Test ListTools
 	listParams := jsonRPCMessage{
@@ -314,8 +313,7 @@ func TestSessionHandleTools(t *testing.T) {
 	}
 }
 
-func initSession(t *testing.T, server *server, sessID string) {
-	// Initialize session
+func initServerSession(t *testing.T, server *server, sessID string) {
 	initParams := initializeParams{
 		ProtocolVersion: protocolVersion,
 		ClientInfo:      Info{Name: "test-client", Version: "1.0"},

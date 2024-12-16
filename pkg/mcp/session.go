@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type session struct {
+type serverSession struct {
 	id      string
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -41,7 +41,7 @@ type clientRequest struct {
 	cancel context.CancelFunc
 }
 
-func (s *session) listen() {
+func (s *serverSession) listen() {
 	pingTicker := time.NewTicker(s.pingInterval)
 
 	for {
@@ -71,14 +71,14 @@ func (s *session) listen() {
 	}
 }
 
-func (s *session) handlePing(msgID MustString) error {
+func (s *serverSession) handlePing(msgID MustString) error {
 	ctx, cancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer cancel()
 
 	return writeResult(ctx, s.writter, msgID, nil)
 }
 
-func (s *session) handleInitialize(
+func (s *serverSession) handleInitialize(
 	msgID MustString,
 	params initializeParams,
 	serverCap ServerCapabilities,
@@ -127,7 +127,7 @@ func (s *session) handleInitialize(
 	})
 }
 
-func (s *session) handlePromptsList(
+func (s *serverSession) handlePromptsList(
 	msgID MustString,
 	params promptsListParams,
 	server PromptServer,
@@ -155,7 +155,7 @@ func (s *session) handlePromptsList(
 	return writeResult(wCtx, s.writter, msgID, ps)
 }
 
-func (s *session) handlePromptsGet(
+func (s *serverSession) handlePromptsGet(
 	msgID MustString,
 	params promptsGetParams,
 	server PromptServer,
@@ -183,7 +183,7 @@ func (s *session) handlePromptsGet(
 	return writeResult(wCtx, s.writter, msgID, p)
 }
 
-func (s *session) handleCompletePrompt(
+func (s *serverSession) handleCompletePrompt(
 	msgID MustString,
 	name string,
 	argument CompletionArgument,
@@ -212,7 +212,7 @@ func (s *session) handleCompletePrompt(
 	return writeResult(wCtx, s.writter, msgID, result)
 }
 
-func (s *session) handleResourcesList(
+func (s *serverSession) handleResourcesList(
 	msgID MustString,
 	params resourcesListParams,
 	server ResourceServer,
@@ -240,7 +240,7 @@ func (s *session) handleResourcesList(
 	return writeResult(wCtx, s.writter, msgID, rs)
 }
 
-func (s *session) handleResourcesRead(
+func (s *serverSession) handleResourcesRead(
 	msgID MustString,
 	params resourcesReadParams,
 	server ResourceServer,
@@ -268,7 +268,7 @@ func (s *session) handleResourcesRead(
 	return writeResult(wCtx, s.writter, msgID, r)
 }
 
-func (s *session) handleResourcesListTemplates(
+func (s *serverSession) handleResourcesListTemplates(
 	msgID MustString,
 	params resourcesTemplatesListParams,
 	server ResourceServer,
@@ -296,7 +296,7 @@ func (s *session) handleResourcesListTemplates(
 	return writeResult(wCtx, s.writter, msgID, ts)
 }
 
-func (s *session) handleResourcesSubscribe(
+func (s *serverSession) handleResourcesSubscribe(
 	msgID MustString,
 	params resourcesSubscribeParams,
 	server ResourceServer,
@@ -322,7 +322,7 @@ func (s *session) handleResourcesSubscribe(
 	return writeResult(wCtx, s.writter, msgID, nil)
 }
 
-func (s *session) handleToolsList(
+func (s *serverSession) handleToolsList(
 	msgID MustString,
 	params toolsListParams,
 	server ToolServer,
@@ -350,7 +350,7 @@ func (s *session) handleToolsList(
 	return writeResult(wCtx, s.writter, msgID, ts)
 }
 
-func (s *session) handleToolsCall(
+func (s *serverSession) handleToolsCall(
 	msgID MustString,
 	params toolsCallParams,
 	server ToolServer,
@@ -378,7 +378,7 @@ func (s *session) handleToolsCall(
 	return writeResult(wCtx, s.writter, msgID, result)
 }
 
-func (s *session) handleCompleteResource(
+func (s *serverSession) handleCompleteResource(
 	msgID MustString,
 	name string,
 	argument CompletionArgument,
@@ -407,14 +407,14 @@ func (s *session) handleCompleteResource(
 	return writeResult(wCtx, s.writter, msgID, result)
 }
 
-func (s *session) handleNotificationsInitialized() {
+func (s *serverSession) handleNotificationsInitialized() {
 	s.initLock.Lock()
 	defer s.initLock.Unlock()
 
 	s.initialized = true
 }
 
-func (s *session) handleNotificationsCancelled(params notificationsCancelledParams) {
+func (s *serverSession) handleNotificationsCancelled(params notificationsCancelledParams) {
 	s.initLock.Lock()
 	defer s.initLock.Unlock()
 
@@ -428,14 +428,14 @@ func (s *session) handleNotificationsCancelled(params notificationsCancelledPara
 	req.cancel()
 }
 
-func (s *session) isInitialized() bool {
+func (s *serverSession) isInitialized() bool {
 	s.initLock.RLock()
 	defer s.initLock.RUnlock()
 
 	return s.initialized
 }
 
-func (s *session) sendError(ctx context.Context, code int, message string, msgID MustString, err error) error {
+func (s *serverSession) sendError(ctx context.Context, code int, message string, msgID MustString, err error) error {
 	return writeError(ctx, s.writter, msgID, jsonRPCError{
 		Code:    code,
 		Message: message,

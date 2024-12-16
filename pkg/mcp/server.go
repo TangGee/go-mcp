@@ -233,7 +233,7 @@ func (s server) listenPromptsList() {
 		}
 
 		s.sessions.Range(func(_, value any) bool {
-			sess, _ := value.(*session)
+			sess, _ := value.(*serverSession)
 			sess.promptsListChan <- struct{}{}
 			return true
 		})
@@ -251,7 +251,7 @@ func (s server) listenResourcesList() {
 		}
 
 		s.sessions.Range(func(_, value any) bool {
-			sess, _ := value.(*session)
+			sess, _ := value.(*serverSession)
 			sess.resourcesListChan <- struct{}{}
 			return true
 		})
@@ -270,7 +270,7 @@ func (s server) listenResourcesSubscribe() {
 		}
 
 		s.sessions.Range(func(_, value any) bool {
-			sess, _ := value.(*session)
+			sess, _ := value.(*serverSession)
 			sess.resourcesSubscribeChan <- uri
 			return true
 		})
@@ -288,7 +288,7 @@ func (s server) listenToolsList() {
 		}
 
 		s.sessions.Range(func(_, value any) bool {
-			sess, _ := value.(*session)
+			sess, _ := value.(*serverSession)
 			sess.toolsListChan <- struct{}{}
 			return true
 		})
@@ -307,7 +307,7 @@ func (s server) listenLog() {
 		}
 
 		s.sessions.Range(func(_, value any) bool {
-			sess, _ := value.(*session)
+			sess, _ := value.(*serverSession)
 			sess.logChan <- params
 			return true
 		})
@@ -333,7 +333,7 @@ func (s server) listenProgress() {
 		if !ok {
 			continue
 		}
-		sess, _ := ss.(*session)
+		sess, _ := ss.(*serverSession)
 		sess.progressChan <- params
 	}
 }
@@ -342,7 +342,7 @@ func (s server) startSession(ctx context.Context, w io.Writer) string {
 	sCtx, sCancel := context.WithCancel(ctx)
 
 	sessID := uuid.New().String()
-	sess := &session{
+	sess := &serverSession{
 		id:                     sessID,
 		ctx:                    sCtx,
 		cancel:                 sCancel,
@@ -374,7 +374,7 @@ func (s server) handleMsg(r io.Reader, sessionID string) error {
 	if !ok {
 		return errSessionNotFound
 	}
-	sess, _ := ss.(*session)
+	sess, _ := ss.(*serverSession)
 
 	// Handle basic protocol messages
 	if err := s.handleBasicMessages(sess, msg); err != nil {
@@ -409,7 +409,7 @@ func (s server) handleMsg(r io.Reader, sessionID string) error {
 	return nil
 }
 
-func (s server) handleBasicMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handleBasicMessages(sess *serverSession, msg jsonRPCMessage) error {
 	switch msg.Method {
 	case methodPing:
 		return sess.handlePing(msg.ID)
@@ -424,7 +424,7 @@ func (s server) handleBasicMessages(sess *session, msg jsonRPCMessage) error {
 	return nil
 }
 
-func (s server) handlePromptMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handlePromptMessages(sess *serverSession, msg jsonRPCMessage) error {
 	if s.promptServer == nil {
 		return nil
 	}
@@ -446,7 +446,7 @@ func (s server) handlePromptMessages(sess *session, msg jsonRPCMessage) error {
 	return nil
 }
 
-func (s server) handleResourceMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handleResourceMessages(sess *serverSession, msg jsonRPCMessage) error {
 	if s.resourceServer == nil {
 		return nil
 	}
@@ -480,7 +480,7 @@ func (s server) handleResourceMessages(sess *session, msg jsonRPCMessage) error 
 	return nil
 }
 
-func (s server) handleToolMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handleToolMessages(sess *serverSession, msg jsonRPCMessage) error {
 	if s.toolServer == nil {
 		return nil
 	}
@@ -502,7 +502,7 @@ func (s server) handleToolMessages(sess *session, msg jsonRPCMessage) error {
 	return nil
 }
 
-func (s server) handleCompletionMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handleCompletionMessages(sess *serverSession, msg jsonRPCMessage) error {
 	if msg.Method != methodCompletionComplete {
 		return nil
 	}
@@ -521,7 +521,7 @@ func (s server) handleCompletionMessages(sess *session, msg jsonRPCMessage) erro
 	return nil
 }
 
-func (s server) handleNotificationMessages(sess *session, msg jsonRPCMessage) error {
+func (s server) handleNotificationMessages(sess *serverSession, msg jsonRPCMessage) error {
 	switch msg.Method {
 	case methodNotificationsInitialized:
 		sess.handleNotificationsInitialized()
@@ -538,7 +538,7 @@ func (s server) handleNotificationMessages(sess *session, msg jsonRPCMessage) er
 
 func (s server) stop() {
 	s.sessions.Range(func(_, value any) bool {
-		sess, _ := value.(*session)
+		sess, _ := value.(*serverSession)
 		sess.cancel()
 		return true
 	})
