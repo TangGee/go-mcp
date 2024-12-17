@@ -32,10 +32,10 @@ func WithPromptServer(srv PromptServer) ServerOption {
 	}
 }
 
-// WithPromptListWatcher sets the prompt list watcher for the server.
-func WithPromptListWatcher(watcher PromptListWatcher) ServerOption {
+// WithPromptListUpdater sets the prompt list watcher for the server.
+func WithPromptListUpdater(updater PromptListUpdater) ServerOption {
 	return func(s *server) {
-		s.promptListWatcher = watcher
+		s.promptListUpdater = updater
 	}
 }
 
@@ -46,17 +46,17 @@ func WithResourceServer(srv ResourceServer) ServerOption {
 	}
 }
 
-// WithResourceListWatcher sets the resource list watcher for the server.
-func WithResourceListWatcher(watcher ResourceListWatcher) ServerOption {
+// WithResourceListUpdater sets the resource list watcher for the server.
+func WithResourceListUpdater(updater ResourceListUpdater) ServerOption {
 	return func(s *server) {
-		s.resourceListWatcher = watcher
+		s.resourceListUpdater = updater
 	}
 }
 
-// WithResourceSubscribeWatcher sets the resource subscribe watcher for the server.
-func WithResourceSubscribeWatcher(watcher ResourceSubscribesWatcher) ServerOption {
+// WithResourceSubscribedUpdater sets the resource subscribe watcher for the server.
+func WithResourceSubscribedUpdater(updater ResourceSubscribedUpdater) ServerOption {
 	return func(s *server) {
-		s.resourceSubscribesWatcher = watcher
+		s.resourceSubscribedUpdater = updater
 	}
 }
 
@@ -67,17 +67,24 @@ func WithToolServer(srv ToolServer) ServerOption {
 	}
 }
 
-// WithToolListWatcher sets the tool list watcher for the server.
-func WithToolListWatcher(watcher ToolListWatcher) ServerOption {
+// WithToolListUpdater sets the tool list watcher for the server.
+func WithToolListUpdater(updater ToolListUpdater) ServerOption {
 	return func(s *server) {
-		s.toolListWatcher = watcher
+		s.toolListUpdater = updater
+	}
+}
+
+// WithRootsListWatcher sets the roots list watcher for the server.
+func WithRootsListWatcher(watcher RootsListWatcher) ServerOption {
+	return func(s *server) {
+		s.rootsListWatcher = watcher
 	}
 }
 
 // WithLogHandler sets the log handler for the server.
-func WithLogHandler(watcher LogWatcher) ServerOption {
+func WithLogHandler(handler LogHandler) ServerOption {
 	return func(s *server) {
-		s.logWatcher = watcher
+		s.logHandler = handler
 	}
 }
 
@@ -95,6 +102,13 @@ func WithWriteTimeout(timeout time.Duration) ServerOption {
 	}
 }
 
+// WithReadTimeout sets the read timeout for the server.
+func WithReadTimeout(timeout time.Duration) ServerOption {
+	return func(s *server) {
+		s.readTimeout = timeout
+	}
+}
+
 // WithPingInterval sets the ping interval for the server.
 func WithPingInterval(interval time.Duration) ServerOption {
 	return func(s *server) {
@@ -104,6 +118,7 @@ func WithPingInterval(interval time.Duration) ServerOption {
 
 var (
 	defaultWriteTimeout = 30 * time.Second
+	defaultReadTimeout  = 30 * time.Second
 	defaultPingInterval = 30 * time.Second
 
 	errInvalidJSON     = errors.New("invalid json")
@@ -119,19 +134,22 @@ type server struct {
 	progresses *sync.Map // map[progressToken]sessionID
 
 	promptServer      PromptServer
-	promptListWatcher PromptListWatcher
+	promptListUpdater PromptListUpdater
 
 	resourceServer            ResourceServer
-	resourceListWatcher       ResourceListWatcher
-	resourceSubscribesWatcher ResourceSubscribesWatcher
+	resourceListUpdater       ResourceListUpdater
+	resourceSubscribedUpdater ResourceSubscribedUpdater
 
 	toolServer      ToolServer
-	toolListWatcher ToolListWatcher
+	toolListUpdater ToolListUpdater
 
-	logWatcher       LogWatcher
+	rootsListWatcher RootsListWatcher
+
+	logHandler       LogHandler
 	progressReporter ProgressReporter
 
 	writeTimeout time.Duration
+	readTimeout  time.Duration
 	pingInterval time.Duration
 
 	sessionStopChan chan string
@@ -154,6 +172,9 @@ func newServer(srv Server, options ...ServerOption) server {
 	if s.writeTimeout == 0 {
 		s.writeTimeout = defaultWriteTimeout
 	}
+	if s.readTimeout == 0 {
+		s.readTimeout = defaultReadTimeout
+	}
 	if s.pingInterval == 0 {
 		s.pingInterval = defaultPingInterval
 	}
@@ -162,26 +183,26 @@ func newServer(srv Server, options ...ServerOption) server {
 
 	if s.promptServer != nil {
 		s.capabilities.Prompts = &PromptsCapability{}
-		if s.promptListWatcher != nil {
+		if s.promptListUpdater != nil {
 			s.capabilities.Prompts.ListChanged = true
 		}
 	}
 	if s.resourceServer != nil {
 		s.capabilities.Resources = &ResourcesCapability{}
-		if s.resourceListWatcher != nil {
+		if s.resourceListUpdater != nil {
 			s.capabilities.Resources.ListChanged = true
 		}
-		if s.resourceSubscribesWatcher != nil {
+		if s.resourceSubscribedUpdater != nil {
 			s.capabilities.Resources.Subscribe = true
 		}
 	}
 	if s.toolServer != nil {
 		s.capabilities.Tools = &ToolsCapability{}
-		if s.toolListWatcher != nil {
+		if s.toolListUpdater != nil {
 			s.capabilities.Tools.ListChanged = true
 		}
 	}
-	if s.logWatcher != nil {
+	if s.logHandler != nil {
 		s.capabilities.Logging = &LoggingCapability{}
 	}
 
@@ -190,19 +211,20 @@ func newServer(srv Server, options ...ServerOption) server {
 
 func (s server) start() {
 	go s.listenStopSession()
-	if s.promptListWatcher != nil {
+	if s.promptListUpdater != nil {
 		go s.listenPromptsList()
 	}
-	if s.resourceListWatcher != nil {
+	if s.resourceListUpdater != nil {
 		go s.listenResourcesList()
 	}
-	if s.resourceSubscribesWatcher != nil {
+	if s.resourceSubscribedUpdater != nil {
 		go s.listenResourcesSubscribe()
 	}
-	if s.toolListWatcher != nil {
+	if s.toolListUpdater != nil {
 		go s.listenToolsList()
 	}
-	if s.logWatcher != nil {
+
+	if s.logHandler != nil {
 		go s.listenLog()
 	}
 	if s.progressReporter != nil {
@@ -223,7 +245,7 @@ func (s server) listenStopSession() {
 }
 
 func (s server) listenPromptsList() {
-	lists := s.promptListWatcher.WatchPromptList()
+	lists := s.promptListUpdater.PromptListUpdates()
 
 	for {
 		select {
@@ -241,7 +263,7 @@ func (s server) listenPromptsList() {
 }
 
 func (s server) listenResourcesList() {
-	lists := s.resourceListWatcher.WatchResourceList()
+	lists := s.resourceListUpdater.ResourceListUpdates()
 
 	for {
 		select {
@@ -259,7 +281,7 @@ func (s server) listenResourcesList() {
 }
 
 func (s server) listenResourcesSubscribe() {
-	subscribes := s.resourceSubscribesWatcher.WatchResourceSubscribed()
+	subscribes := s.resourceSubscribedUpdater.ResourceSubscriberUpdates()
 	var uri string
 
 	for {
@@ -278,7 +300,7 @@ func (s server) listenResourcesSubscribe() {
 }
 
 func (s server) listenToolsList() {
-	lists := s.toolListWatcher.WatchToolList()
+	lists := s.toolListUpdater.WatchToolList()
 
 	for {
 		select {
@@ -296,7 +318,7 @@ func (s server) listenToolsList() {
 }
 
 func (s server) listenLog() {
-	logs := s.logWatcher.WatchLog()
+	logs := s.logHandler.LogStreams()
 	var params LogParams
 
 	for {
@@ -315,7 +337,7 @@ func (s server) listenLog() {
 }
 
 func (s server) listenProgress() {
-	progresses := s.progressReporter.ReportProgress()
+	progresses := s.progressReporter.ProgressReports()
 	var params ProgressParams
 
 	for {
@@ -348,6 +370,7 @@ func (s server) startSession(ctx context.Context, w io.Writer) string {
 		cancel:                 sCancel,
 		writter:                w,
 		writeTimeout:           s.writeTimeout,
+		readTimeout:            s.readTimeout,
 		pingInterval:           s.pingInterval,
 		stopChan:               s.sessionStopChan,
 		promptsListChan:        make(chan struct{}),
@@ -403,6 +426,11 @@ func (s server) handleMsg(r io.Reader, sessionID string) error {
 
 	// Handle notification messages
 	if err := s.handleNotificationMessages(sess, msg); err != nil {
+		return err
+	}
+
+	// Handle result messages
+	if err := s.handleResultMessages(sess, msg); err != nil {
 		return err
 	}
 
@@ -531,9 +559,39 @@ func (s server) handleNotificationMessages(sess *serverSession, msg jsonRPCMessa
 			return errInvalidJSON
 		}
 		sess.handleNotificationsCancelled(params)
+	case methodNotificationsRootsListChanged:
+		if s.rootsListWatcher != nil {
+			s.rootsListWatcher.OnRootsListChanged()
+		}
 	}
 
 	return nil
+}
+
+func (s server) handleResultMessages(sess *serverSession, msg jsonRPCMessage) error {
+	if msg.Method != "" {
+		return nil
+	}
+
+	return sess.handleResult(msg)
+}
+
+func (s server) rootsList(ctx context.Context) (RootList, error) {
+	ss, ok := s.sessions.Load(sessionIDFromContext(ctx))
+	if !ok {
+		return RootList{}, errSessionNotFound
+	}
+	sess, _ := ss.(*serverSession)
+	return sess.rootsList()
+}
+
+func (s server) createSampleMessage(ctx context.Context, params SamplingParams) (SamplingResult, error) {
+	ss, ok := s.sessions.Load(sessionIDFromContext(ctx))
+	if !ok {
+		return SamplingResult{}, errSessionNotFound
+	}
+	sess, _ := ss.(*serverSession)
+	return sess.createSampleMessage(params)
 }
 
 func (s server) stop() {

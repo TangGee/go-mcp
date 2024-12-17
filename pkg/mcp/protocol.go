@@ -104,6 +104,9 @@ const (
 	methodToolsList = "tools/list"
 	methodToolsCall = "tools/call"
 
+	methodRootsList             = "roots/list"
+	methodSamplingCreateMessage = "sampling/createMessage"
+
 	methodCompletionComplete = "completion/complete"
 
 	methodNotificationsInitialized          = "notifications/initialized"
@@ -114,6 +117,8 @@ const (
 	methodNotificationsToolsListChanged     = "notifications/tools/list_changed"
 	methodNotificationsProgress             = "notifications/progress"
 	methodNotificationsMessage              = "notifications/message"
+
+	methodNotificationsRootsListChanged = "notifications/roots/list_changed"
 
 	jsonRPCParseErrorCode     = -32700
 	jsonRPCInvalidRequestCode = -32600
@@ -157,6 +162,22 @@ func writeResult(ctx context.Context, w io.Writer, id MustString, result any) er
 		JSONRPC: jsonRPCVersion,
 		ID:      id,
 		Result:  resBs,
+	}
+
+	return writeMessage(ctx, w, msg)
+}
+
+func writeParams(ctx context.Context, w io.Writer, id MustString, method string, params any) error {
+	paramsBs, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("failed to marshal params: %w", err)
+	}
+
+	msg := jsonRPCMessage{
+		JSONRPC: jsonRPCVersion,
+		ID:      id,
+		Method:  method,
+		Params:  paramsBs,
 	}
 
 	return writeMessage(ctx, w, msg)
@@ -209,4 +230,8 @@ func (m *MustString) UnmarshalJSON(data []byte) error {
 // always encoding as a string value.
 func (m MustString) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(m))
+}
+
+func (j jsonRPCError) Error() string {
+	return fmt.Sprintf("request error, code: %d, message: %s, data %v", j.Code, j.Message, j.Data)
 }

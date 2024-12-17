@@ -2,11 +2,14 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type serverSession struct {
@@ -19,9 +22,11 @@ type serverSession struct {
 	clientInfo         Info
 
 	writeTimeout time.Duration
+	readTimeout  time.Duration
 	pingInterval time.Duration
 
-	requests            sync.Map // map[requestID]clientRequest
+	clientRequests      sync.Map // map[requestID]clientRequest
+	serverRequests      sync.Map // map[requestID]chan jsonRPCMessage
 	subscribedResources sync.Map // map[uri]struct{}
 
 	promptsListChan        chan struct{}
@@ -39,6 +44,23 @@ type serverSession struct {
 type clientRequest struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type sessionIDKeyType string
+
+const sessionIDKey sessionIDKeyType = "sessionID"
+
+func sessionIDFromContext(ctx context.Context) string {
+	v := ctx.Value(sessionIDKey)
+	if v == nil {
+		return ""
+	}
+	id, _ := v.(string)
+	return id
+}
+
+func ctxWithSessionID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, sessionIDKey, id)
 }
 
 func (s *serverSession) listen() {
@@ -139,7 +161,7 @@ func (s *serverSession) handlePromptsList(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -167,7 +189,7 @@ func (s *serverSession) handlePromptsGet(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -196,7 +218,7 @@ func (s *serverSession) handleCompletePrompt(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -224,7 +246,7 @@ func (s *serverSession) handleResourcesList(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -252,7 +274,7 @@ func (s *serverSession) handleResourcesRead(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -280,7 +302,7 @@ func (s *serverSession) handleResourcesListTemplates(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -308,7 +330,7 @@ func (s *serverSession) handleResourcesSubscribe(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -334,7 +356,7 @@ func (s *serverSession) handleToolsList(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -362,7 +384,7 @@ func (s *serverSession) handleToolsCall(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -391,7 +413,7 @@ func (s *serverSession) handleCompleteResource(
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
-	s.requests.Store(msgID, &clientRequest{
+	s.clientRequests.Store(msgID, &clientRequest{
 		ctx:    ctx,
 		cancel: cancel,
 	})
@@ -415,10 +437,7 @@ func (s *serverSession) handleNotificationsInitialized() {
 }
 
 func (s *serverSession) handleNotificationsCancelled(params notificationsCancelledParams) {
-	s.initLock.Lock()
-	defer s.initLock.Unlock()
-
-	r, ok := s.requests.Load(params.RequestID)
+	r, ok := s.clientRequests.Load(params.RequestID)
 	if !ok {
 		return
 	}
@@ -428,11 +447,93 @@ func (s *serverSession) handleNotificationsCancelled(params notificationsCancell
 	req.cancel()
 }
 
+func (s *serverSession) handleResult(msg jsonRPCMessage) error {
+	reqID := string(msg.ID)
+	rc, ok := s.serverRequests.Load(reqID)
+	if !ok {
+		return nil
+	}
+	resChan, _ := rc.(chan jsonRPCMessage)
+	resChan <- msg
+	return nil
+}
+
 func (s *serverSession) isInitialized() bool {
 	s.initLock.RLock()
 	defer s.initLock.RUnlock()
 
 	return s.initialized
+}
+
+func (s *serverSession) registerRequest() (string, chan jsonRPCMessage) {
+	reqID := uuid.New().String()
+	resChan := make(chan jsonRPCMessage)
+	s.serverRequests.Store(reqID, resChan)
+	return reqID, resChan
+}
+
+func (s *serverSession) rootsList() (RootList, error) {
+	reqID, resChan := s.registerRequest()
+
+	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
+	defer wCancel()
+
+	if err := writeParams(wCtx, s.writter, MustString(reqID), methodRootsList, nil); err != nil {
+		return RootList{}, fmt.Errorf("failed to write message: %w", err)
+	}
+
+	ticker := time.NewTicker(s.readTimeout)
+
+	var msg jsonRPCMessage
+
+	select {
+	case <-ticker.C:
+		return RootList{}, fmt.Errorf("roots list timeout")
+	case <-wCtx.Done():
+		return RootList{}, wCtx.Err()
+	case msg = <-resChan:
+	}
+
+	if msg.Error != nil {
+		return RootList{}, msg.Error
+	}
+	var result RootList
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		return RootList{}, err
+	}
+	return result, nil
+}
+
+func (s *serverSession) createSampleMessage(params SamplingParams) (SamplingResult, error) {
+	reqID, resChan := s.registerRequest()
+
+	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
+	defer wCancel()
+
+	if err := writeParams(wCtx, s.writter, MustString(reqID), methodSamplingCreateMessage, params); err != nil {
+		return SamplingResult{}, fmt.Errorf("failed to write message: %w", err)
+	}
+
+	ticker := time.NewTicker(s.readTimeout)
+
+	var msg jsonRPCMessage
+
+	select {
+	case <-ticker.C:
+		return SamplingResult{}, fmt.Errorf("sampling message timeout")
+	case <-wCtx.Done():
+		return SamplingResult{}, wCtx.Err()
+	case msg = <-resChan:
+	}
+
+	if msg.Error != nil {
+		return SamplingResult{}, msg.Error
+	}
+	var result SamplingResult
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
+		return SamplingResult{}, err
+	}
+	return result, nil
 }
 
 func (s *serverSession) sendError(ctx context.Context, code int, message string, msgID MustString, err error) error {

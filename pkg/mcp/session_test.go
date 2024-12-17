@@ -361,7 +361,7 @@ func (m *mockPromptServer) CompletesPrompt(context.Context, string, CompletionAr
 	return CompletionResult{}, nil
 }
 
-func (m *mockPromptListWatcher) WatchPromptList() <-chan struct{} {
+func (m *mockPromptListWatcher) PromptListUpdates() <-chan struct{} {
 	if m.ch == nil {
 		m.ch = make(chan struct{})
 	}
