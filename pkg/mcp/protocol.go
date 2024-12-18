@@ -52,12 +52,14 @@ type notificationsCancelledParams struct {
 }
 
 type completionCompleteParams struct {
-	Ref struct {
-		Type string `json:"type"`
-		Name string `json:"name,omitempty"`
-		URI  string `json:"uri,omitempty"`
-	} `json:"ref"`
-	Argument CompletionArgument `json:"argument"`
+	Ref      completionCompleteRef `json:"ref"`
+	Argument CompletionArgument    `json:"argument"`
+}
+
+type completionCompleteRef struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
+	URI  string `json:"uri,omitempty"`
 }
 
 type paramsMeta struct {
@@ -86,6 +88,7 @@ const (
 	errMsgInvalidJSON                    = "Invalid json"
 	errMsgUnsupportedProtocolVersion     = "Unsupported protocol version"
 	errMsgInsufficientClientCapabilities = "Insufficient client capabilities"
+	errMsgInsufficientServerCapabilities = "Insufficient server capabilities"
 	errMsgInternalError                  = "Internal error"
 	errMsgWriteTimeout                   = "Write timeout"
 	errMsgReadTimeout                    = "Read timeout"

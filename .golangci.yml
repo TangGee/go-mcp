@@ -29,6 +29,11 @@ linters-settings:
       - switch
       - map
 
+  gocognit:
+    # Minimal code complexity to report.
+    # Default: 30 (but we recommend 10-20)
+    min-complexity: 50
+
   funlen:
     # Checks the number of lines in a function.
     # If lower than 0, disable the check.
@@ -38,6 +43,16 @@ linters-settings:
     # If lower than 0, disable the check.
     # Default: 40
     statements: 50
+
+  nestif:
+    # Minimal complexity of if statements to report.
+    # Default: 5
+    min-complexity: 8
+
+  dupl:
+    # Tokens count to trigger issue.
+    # Default: 150
+    threshold: 200
 
   gocritic:
     # Settings passed to gocritic.
@@ -163,7 +178,7 @@ linters:
     - gocyclo # computes and checks the cyclomatic complexity of functions
     - godot # checks if comments end in a period
     - goimports # in addition to fixing imports, goimports also formats your code in the same style as gofmt
-    - gomnd # detects magic numbers
+    - mnd # detects magic numbers
     - gomoddirectives # manages the use of 'replace', 'retract', and 'excludes' directives in go.mod
     - gomodguard # allow and block lists linter for direct Go module dependencies. This is different from depguard where there are different block types for example version constraints and module recommendations
     - goprintffuncname # checks that printf-like functions are named with f at the end

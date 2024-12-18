@@ -5,15 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 )
-
-type mockWriter struct {
-	sync.Mutex
-	written []byte
-}
 
 type mockServer struct{}
 
@@ -89,7 +83,7 @@ func TestServerHandleMsg(t *testing.T) {
 	}
 
 	srv := &mockServer{}
-	s := newServer(srv, WithWriteTimeout(time.Second))
+	s := newServer(srv, WithServerWriteTimeout(time.Second))
 
 	s.sessions.Store(sess.id, sess)
 
@@ -112,7 +106,7 @@ func TestServerHandleMsg(t *testing.T) {
 
 func TestServerStartSession(t *testing.T) {
 	srv := &mockServer{}
-	s := newServer(srv, WithWriteTimeout(time.Second))
+	s := newServer(srv, WithServerWriteTimeout(time.Second))
 	s.start()
 
 	writer := &mockWriter{}
@@ -134,10 +128,10 @@ func TestServerStartSession(t *testing.T) {
 	s.stop()
 }
 
-func TestServerRootsList(t *testing.T) {
+func TestServerListRoots(t *testing.T) {
 	writer := &mockWriter{}
 	srv := &mockServer{}
-	s := newServer(srv, WithWriteTimeout(time.Second), WithReadTimeout(time.Second))
+	s := newServer(srv, WithServerWriteTimeout(time.Second), WithServerReadTimeout(time.Second))
 
 	ctx := context.Background()
 	sessID := s.startSession(ctx, writer)
@@ -171,25 +165,29 @@ func TestServerRootsList(t *testing.T) {
 				{URI: "test://root2", Name: "Root 2"},
 			},
 		}
+		mockBs, err := json.Marshal(mockResponse)
+		if err != nil {
+			t.Errorf("failed to marshal mock response: %v", err)
+		}
 
 		responseMsg := jsonRPCMessage{
 			JSONRPC: jsonRPCVersion,
 			ID:      msg.ID,
-			Result:  json.RawMessage(mustMarshal(mockResponse)),
+			Result:  mockBs,
 		}
 
 		responseBs, _ := json.Marshal(responseMsg)
-		err := s.handleMsg(bytes.NewReader(responseBs), sessID)
+		err = s.handleMsg(bytes.NewReader(responseBs), sessID)
 		if err != nil {
 			t.Errorf("handleMsg failed: %v", err)
 		}
 	}()
 
-	// Call rootsList
+	// Call listRoots
 	ctx = ctxWithSessionID(ctx, sessID)
-	result, err := s.rootsList(ctx)
+	result, err := s.listRoots(ctx)
 	if err != nil {
-		t.Fatalf("rootsList failed: %v", err)
+		t.Fatalf("listRoots failed: %v", err)
 	}
 
 	// Verify result
@@ -207,14 +205,10 @@ func TestServerRootsList(t *testing.T) {
 func TestServerCreateSampleMessage(t *testing.T) {
 	writer := &mockWriter{}
 	srv := &mockServer{}
-	s := newServer(srv, WithWriteTimeout(time.Second), WithReadTimeout(time.Second))
+	s := newServer(srv, WithServerWriteTimeout(time.Second), WithServerReadTimeout(time.Second))
 
 	ctx := context.Background()
 	sessID := s.startSession(ctx, writer)
-
-	// Set up mock response
-	ss, _ := s.sessions.Load(sessID)
-	sess, _ := ss.(*serverSession)
 
 	// Start goroutine to handle mock response
 	go func() {
@@ -255,16 +249,22 @@ func TestServerCreateSampleMessage(t *testing.T) {
 			Model:      "test-model",
 			StopReason: "completed",
 		}
+		mockBs, err := json.Marshal(mockResponse)
+		if err != nil {
+			t.Errorf("failed to marshal mock response: %v", err)
+		}
 
 		responseMsg := jsonRPCMessage{
 			JSONRPC: jsonRPCVersion,
 			ID:      msg.ID,
-			Result:  json.RawMessage(mustMarshal(mockResponse)),
+			Result:  mockBs,
 		}
 
-		rc, _ := sess.serverRequests.Load(string(msg.ID))
-		resChan, _ := rc.(chan jsonRPCMessage)
-		resChan <- responseMsg
+		responseBs, _ := json.Marshal(responseMsg)
+		err = s.handleMsg(bytes.NewReader(responseBs), sessID)
+		if err != nil {
+			t.Errorf("handleMsg failed: %v", err)
+		}
 	}()
 
 	// Call createSampleMessage
@@ -307,31 +307,10 @@ func TestServerCreateSampleMessage(t *testing.T) {
 	}
 }
 
-func mustMarshal(v interface{}) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
-}
-
-func (w *mockWriter) Write(p []byte) (int, error) {
-	w.Lock()
-	defer w.Unlock()
-	w.written = append(w.written, p...)
-	return len(p), nil
-}
-
-func (w *mockWriter) getWritten() []byte {
-	w.Lock()
-	defer w.Unlock()
-	return w.written
-}
-
 func (m *mockServer) Info() Info {
 	return Info{Name: "test-server", Version: "1.0"}
 }
 
-func (m *mockServer) RequiredClientCapabilities() ClientCapabilities {
-	return ClientCapabilities{}
+func (m *mockServer) RequireSamplingClient() bool {
+	return false
 }

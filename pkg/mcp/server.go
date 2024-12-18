@@ -3,7 +3,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"sync"
 	"time"
@@ -14,16 +13,48 @@ import (
 // Server represents the main MCP server interface that users will implement.
 type Server interface {
 	Info() Info
-	RequiredClientCapabilities() ClientCapabilities
-}
-
-// LoggingHandler is an interface for logging.
-type LoggingHandler interface {
-	LogStream() <-chan LogParams
+	RequireSamplingClient() bool
 }
 
 // ServerOption represents the options for the server.
 type ServerOption func(*server)
+
+type server struct {
+	capabilities               ServerCapabilities
+	info                       Info
+	requiredClientCapabilities ClientCapabilities
+
+	sessions   *sync.Map // map[sessionID]*serverSession
+	progresses *sync.Map // map[progressToken]sessionID
+
+	promptServer      PromptServer
+	promptListUpdater PromptListUpdater
+
+	resourceServer            ResourceServer
+	resourceListUpdater       ResourceListUpdater
+	resourceSubscribedUpdater ResourceSubscribedUpdater
+
+	toolServer      ToolServer
+	toolListUpdater ToolListUpdater
+
+	rootsListWatcher RootsListWatcher
+
+	logHandler       LogHandler
+	progressReporter ProgressReporter
+
+	writeTimeout time.Duration
+	readTimeout  time.Duration
+	pingInterval time.Duration
+
+	sessionStopChan chan string
+	closeChan       chan struct{}
+}
+
+var (
+	defaultServerWriteTimeout = 30 * time.Second
+	defaultServerReadTimeout  = 30 * time.Second
+	defaultServerPingInterval = 30 * time.Second
+)
 
 // WithPromptServer sets the prompt server for the server.
 func WithPromptServer(srv PromptServer) ServerOption {
@@ -95,88 +126,47 @@ func WithProgressReporter(reporter ProgressReporter) ServerOption {
 	}
 }
 
-// WithWriteTimeout sets the write timeout for the server.
-func WithWriteTimeout(timeout time.Duration) ServerOption {
+// WithServerWriteTimeout sets the write timeout for the server.
+func WithServerWriteTimeout(timeout time.Duration) ServerOption {
 	return func(s *server) {
 		s.writeTimeout = timeout
 	}
 }
 
-// WithReadTimeout sets the read timeout for the server.
-func WithReadTimeout(timeout time.Duration) ServerOption {
+// WithServerReadTimeout sets the read timeout for the server.
+func WithServerReadTimeout(timeout time.Duration) ServerOption {
 	return func(s *server) {
 		s.readTimeout = timeout
 	}
 }
 
-// WithPingInterval sets the ping interval for the server.
-func WithPingInterval(interval time.Duration) ServerOption {
+// WithServerPingInterval sets the ping interval for the server.
+func WithServerPingInterval(interval time.Duration) ServerOption {
 	return func(s *server) {
 		s.pingInterval = interval
 	}
 }
 
-var (
-	defaultWriteTimeout = 30 * time.Second
-	defaultReadTimeout  = 30 * time.Second
-	defaultPingInterval = 30 * time.Second
-
-	errInvalidJSON     = errors.New("invalid json")
-	errSessionNotFound = errors.New("session not found")
-)
-
-type server struct {
-	capabilities               ServerCapabilities
-	serverInfo                 Info
-	requiredClientCapabilities ClientCapabilities
-
-	sessions   *sync.Map // map[sessionID]*serverSession
-	progresses *sync.Map // map[progressToken]sessionID
-
-	promptServer      PromptServer
-	promptListUpdater PromptListUpdater
-
-	resourceServer            ResourceServer
-	resourceListUpdater       ResourceListUpdater
-	resourceSubscribedUpdater ResourceSubscribedUpdater
-
-	toolServer      ToolServer
-	toolListUpdater ToolListUpdater
-
-	rootsListWatcher RootsListWatcher
-
-	logHandler       LogHandler
-	progressReporter ProgressReporter
-
-	writeTimeout time.Duration
-	readTimeout  time.Duration
-	pingInterval time.Duration
-
-	sessionStopChan chan string
-	closeChan       chan struct{}
-}
-
 func newServer(srv Server, options ...ServerOption) server {
 	s := server{
-		serverInfo:                 srv.Info(),
-		requiredClientCapabilities: srv.RequiredClientCapabilities(),
-		sessions:                   new(sync.Map),
-		progresses:                 new(sync.Map),
-		sessionStopChan:            make(chan string),
-		closeChan:                  make(chan struct{}),
+		info:            srv.Info(),
+		sessions:        new(sync.Map),
+		progresses:      new(sync.Map),
+		sessionStopChan: make(chan string),
+		closeChan:       make(chan struct{}),
 	}
 	for _, opt := range options {
 		opt(&s)
 	}
 
 	if s.writeTimeout == 0 {
-		s.writeTimeout = defaultWriteTimeout
+		s.writeTimeout = defaultServerWriteTimeout
 	}
 	if s.readTimeout == 0 {
-		s.readTimeout = defaultReadTimeout
+		s.readTimeout = defaultServerReadTimeout
 	}
 	if s.pingInterval == 0 {
-		s.pingInterval = defaultPingInterval
+		s.pingInterval = defaultServerPingInterval
 	}
 
 	s.capabilities = ServerCapabilities{}
@@ -204,6 +194,18 @@ func newServer(srv Server, options ...ServerOption) server {
 	}
 	if s.logHandler != nil {
 		s.capabilities.Logging = &LoggingCapability{}
+	}
+
+	s.requiredClientCapabilities = ClientCapabilities{}
+
+	if s.rootsListWatcher != nil {
+		s.requiredClientCapabilities.Roots = &RootsCapability{
+			ListChanged: true,
+		}
+	}
+
+	if srv.RequireSamplingClient() {
+		s.requiredClientCapabilities.Sampling = &SamplingCapability{}
 	}
 
 	return s
@@ -447,7 +449,7 @@ func (s server) handleBasicMessages(sess *serverSession, msg jsonRPCMessage) err
 			return errInvalidJSON
 		}
 		return sess.handleInitialize(msg.ID, params, s.capabilities,
-			s.requiredClientCapabilities, s.serverInfo)
+			s.requiredClientCapabilities, s.info)
 	}
 	return nil
 }
@@ -576,13 +578,13 @@ func (s server) handleResultMessages(sess *serverSession, msg jsonRPCMessage) er
 	return sess.handleResult(msg)
 }
 
-func (s server) rootsList(ctx context.Context) (RootList, error) {
+func (s server) listRoots(ctx context.Context) (RootList, error) {
 	ss, ok := s.sessions.Load(sessionIDFromContext(ctx))
 	if !ok {
 		return RootList{}, errSessionNotFound
 	}
 	sess, _ := ss.(*serverSession)
-	return sess.rootsList()
+	return sess.listRoots()
 }
 
 func (s server) createSampleMessage(ctx context.Context, params SamplingParams) (SamplingResult, error) {

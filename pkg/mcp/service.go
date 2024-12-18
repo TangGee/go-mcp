@@ -2,418 +2,309 @@ package mcp
 
 import "context"
 
+// Server interfaces
+
 // PromptServer defines the interface for managing prompts in the MCP protocol.
-// Implementations handle the core prompt functionality including listing available prompts,
-// retrieving specific prompts with arguments, and providing prompt argument completions.
+// It provides functionality for listing available prompts, retrieving specific prompts
+// with arguments, and providing prompt argument completions.
 type PromptServer interface {
 	// ListPrompts returns a paginated list of available prompts.
 	//
-	// cursor: Optional pagination cursor from a previous ListPrompts call.
-	// Empty string requests the first page.
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - cursor: Optional pagination cursor from previous ListPrompts call
+	//   * Empty string requests the first page
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns PromptList containing available prompts and next page cursor.
-	// Returns error if the operation fails.
+	// Returns:
+	// - PromptList containing:
+	//   * Available prompts
+	//   * Next page cursor if more results exist
+	// - error if:
+	//   * Operation fails
+	//   * Context is cancelled
 	ListPrompts(ctx context.Context, cursor string, progressToken MustString) (PromptList, error)
 
 	// GetPrompt retrieves a specific prompt template by name with the given arguments.
 	//
-	// name: The unique identifier of the prompt to retrieve
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - name: Unique identifier of the prompt to retrieve
+	// - args: Map of argument name-value pairs
+	//   * Must satisfy required arguments defined in prompt's Arguments field
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// args: Map of argument name to value pairs to be applied to the prompt template.
-	// Must satisfy the required arguments defined in the prompt's Arguments field.
-	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns the Prompt with the template and metadata.
-	// Returns error if prompt not found or arguments are invalid.
+	// Returns:
+	// - Prompt containing:
+	//   * Template content
+	//   * Associated metadata
+	// - error if:
+	//   * Prompt not found
+	//   * Arguments are invalid
+	//   * Context is cancelled
 	GetPrompt(ctx context.Context, name string, args map[string]any, progressToken MustString) (Prompt, error)
 
 	// CompletesPrompt provides completion suggestions for a prompt argument.
 	// Used to implement interactive argument completion in clients.
 	//
-	// name: The unique identifier of the prompt to get completions for
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - name: Unique identifier of the prompt to get completions for
+	// - arg: Argument name and partial value to get completions for
 	//
-	// arg: The argument name and partial value to get completions for
-	//
-	// Returns CompletionResult containing possible values that complete the partial argument.
-	// The HasMore field indicates if additional completion values are available.
-	// Returns error if the prompt doesn't exist or completions cannot be generated.
+	// Returns:
+	// - CompletionResult containing:
+	//   * Possible completion values
+	//   * HasMore flag indicating if additional values exist
+	// - error if:
+	//   * Prompt doesn't exist
+	//   * Completions cannot be generated
+	//   * Context is cancelled
 	CompletesPrompt(ctx context.Context, name string, arg CompletionArgument) (CompletionResult, error)
 }
 
 // PromptListUpdater provides an interface for monitoring changes to the available prompts list.
-// Implementations should maintain a channel that emits notifications whenever the list of
-// available prompts changes, such as when prompts are added, removed, or modified.
+// It maintains a channel that emits notifications whenever prompts are added, removed, or modified.
 //
 // The notifications are used by the MCP server to inform connected clients about prompt list
 // changes via the "notifications/prompts/list_changed" method. Clients can then refresh their
 // cached prompt lists by calling ListPrompts again.
 //
-// The channel returned by PromptListUpdates should:
-//   - Remain open for the lifetime of the updater
-//   - Be safe for concurrent receives from multiple goroutines
-//   - Never block on sends - implementations should use buffered channels or
-//     drop notifications if receivers are not keeping up
+// The channel returned by PromptListUpdates must:
+// - Remain open for the lifetime of the updater
+// - Be safe for concurrent receives from multiple goroutines
+// - Never block on sends using buffered channels or dropped notifications
 //
-// A struct{} is sent through the channel as the actual value is not important,
-// only the notification of a change matters.
-//
-// Example implementation:
-//
-//	type MyPromptServer struct {
-//	    prompts    []Prompt
-//	    updateChan chan struct{}
-//	}
-//
-//	func (s *MyPromptServer) PromptListUpdates() <-chan struct{} {
-//	    return s.updateChan
-//	}
-//
-//	func (s *MyPromptServer) AddPrompt(p Prompt) {
-//	    s.prompts = append(s.prompts, p)
-//	    // Notify listeners that prompt list has changed
-//	    s.updateChan <- struct{}{}
-//	}
+// A struct{} is sent through the channel as only the notification matters, not the value.
 type PromptListUpdater interface {
 	PromptListUpdates() <-chan struct{}
 }
 
 // ResourceServer defines the interface for managing resources in the MCP protocol.
-// Implementations handle core resource functionality including listing available resources,
-// reading specific resources, managing resource templates, and resource subscriptions.
+// It provides functionality for listing, reading, and subscribing to resources,
+// as well as managing resource templates.
 type ResourceServer interface {
 	// ListResources returns a paginated list of available resources.
 	//
-	// cursor: Optional pagination cursor from a previous ListResources call.
-	// Empty string requests the first page.
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - cursor: Pagination cursor from previous ListResources call
+	//   * Empty string requests the first page
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns ResourceList containing available resources and next page cursor.
-	// Returns error if the operation fails.
+	// Returns:
+	// - ResourceList containing:
+	//   * Available resources
+	//   * Next page cursor if more results exist
+	// - error if:
+	//   * Operation fails
+	//   * Context is cancelled
 	ListResources(ctx context.Context, cursor string, progressToken MustString) (*ResourceList, error)
 
 	// ReadResource retrieves a specific resource by its URI.
 	//
-	// uri: The unique identifier of the resource to retrieve.
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - uri: Unique identifier of the resource to retrieve
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns the Resource with its content and metadata.
-	// Returns error if resource not found or cannot be read.
+	// Returns:
+	// - Resource containing:
+	//   * Resource content
+	//   * Associated metadata
+	// - error if:
+	//   * Resource not found
+	//   * Resource cannot be read
+	//   * Context is cancelled
 	ReadResource(ctx context.Context, uri string, progressToken MustString) (*Resource, error)
 
 	// ListResourceTemplates returns all available resource templates.
-	// Templates define patterns for generating resource URIs and provide metadata
-	// about the expected resource format.
 	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// Returns slice of ResourceTemplate containing available templates.
-	// Returns error if templates cannot be retrieved.
+	// Returns:
+	// - []ResourceTemplate containing:
+	//   * Available templates with URI patterns
+	//   * Template metadata
+	// - error if:
+	//   * Templates cannot be retrieved
+	//   * Context is cancelled
 	ListResourceTemplates(ctx context.Context, progressToken MustString) ([]ResourceTemplate, error)
 
 	// CompletesResourceTemplate provides completion suggestions for a resource template argument.
-	// Used to implement interactive URI template completion in clients.
 	//
-	// name: The unique identifier of the template to get completions for
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - name: Unique identifier of the template to get completions for
+	// - arg: Argument name and partial value to get completions for
 	//
-	// arg: The argument name and partial value to get completions for
-	//
-	// Returns CompletionResult containing possible values that complete the partial argument.
-	// The HasMore field indicates if additional completion values are available.
-	// Returns error if the template doesn't exist or completions cannot be generated.
+	// Returns:
+	// - CompletionResult containing:
+	//   * Possible completion values
+	//   * HasMore flag indicating if additional values exist
+	// - error if:
+	//   * Template doesn't exist
+	//   * Completions cannot be generated
+	//   * Context is cancelled
 	CompletesResourceTemplate(ctx context.Context, name string, arg CompletionArgument) (CompletionResult, error)
 
 	// SubscribeResource registers interest in a specific resource URI.
-	// When the resource changes, notifications will be sent via ResourceSubcribedUpdater
-	// to all subscribed clients.
 	//
-	// uri: The unique identifier of the resource to subscribe to.
-	// The same URI used in ReadResource calls.
+	// Parameters:
+	// - uri: Unique identifier of the resource to subscribe to
+	//   * Must match URI used in ReadResource calls
 	SubscribeResource(uri string)
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
-// Implementations should maintain a channel that emits notifications whenever the list of
-// available resources changes, such as when resources are added, removed, or modified.
-//
-// The notifications are used by the MCP server to inform connected clients about resource list
-// changes via the "notifications/resources/list_changed" method. Clients can then refresh their
-// cached resource lists by calling ListResources again.
-//
-// The channel returned by ResourceListUpdates should:
-//   - Remain open for the lifetime of the updater
-//   - Be safe for concurrent receives from multiple goroutines
-//   - Never block on sends - implementations should use buffered channels or
-//     drop notifications if receivers are not keeping up
-//
-// A struct{} is sent through the channel as the actual value is not important,
-// only the notification of a change matters.
-//
-// Example usage:
-//
-//	type MyResourceServer struct {
-//	    resources  []Resource
-//	    updateChan chan struct{}
-//	}
-//
-//	func (s *MyResourceServer) ResourceListUpdates() <-chan struct{} {
-//	    return s.updateChan
-//	}
-//
-//	func (s *MyResourceServer) AddResource(r Resource) {
-//	    s.resources = append(s.resources, r)
-//	    // Notify listeners that resource list has changed
-//	    s.updateChan <- struct{}{}
-//	}
+// It maintains a channel that emits notifications whenever resources are added, removed, or modified.
 type ResourceListUpdater interface {
+	// ResourceListUpdates returns a channel that emits notifications when the resource list changes.
+	//
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the updater
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped notifications
+	//   * Emits struct{} as only the notification matters, not the value
 	ResourceListUpdates() <-chan struct{}
 }
 
 // ResourceSubscribedUpdater provides an interface for monitoring changes to subscribed resources.
-// Implementations should maintain a channel that emits notifications whenever a subscribed resource
-// changes, such as when its content is modified or updated.
-//
-// The notifications are used by the MCP server to inform connected clients about resource changes
-// via the "notifications/resources/subscribe" method. Clients that have subscribed to specific
-// resources using ResourceServer.SubscribeResource will receive these notifications and can then
-// refresh their cached resource content by calling ReadResource again.
-//
-// The channel returned by ResourceSubscriberUpdates should:
-//   - Remain open for the lifetime of the updater
-//   - Be safe for concurrent receives from multiple goroutines
-//   - Never block on sends - implementations should use buffered channels or
-//     drop notifications if receivers are not keeping up
-//   - Emit the URI of the resource that changed
-//
-// Example implementation:
-//
-//	type MyResourceServer struct {
-//	    resources  map[string]*Resource
-//	    updateChan chan string
-//	}
-//
-//	func (s *MyResourceServer) ResourceSubscriberUpdates() <-chan string {
-//	    return s.updateChan
-//	}
-//
-//	func (s *MyResourceServer) UpdateResource(uri string, content []byte) {
-//	    s.resources[uri] = &Resource{URI: uri, Content: content}
-//	    // Notify subscribers that resource has changed
-//	    s.updateChan <- uri
-//	}
+// It maintains a channel that emits notifications whenever a subscribed resource changes.
 type ResourceSubscribedUpdater interface {
+	// ResourceSubscriberUpdates returns a channel that emits notifications when subscribed resources change.
+	//
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the updater
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped notifications
+	//   * Emits the URI of the resource that changed
 	ResourceSubscriberUpdates() <-chan string
 }
 
 // ToolServer defines the interface for managing tools in the MCP protocol.
-// Implementations handle core tool functionality including listing available tools
-// and executing tool operations with arguments.
+// It provides functionality for listing available tools and executing tool operations.
 type ToolServer interface {
 	// ListTools returns a paginated list of available tools.
 	//
-	// cursor: Optional pagination cursor from a previous ListTools call.
-	// Empty string requests the first page.
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - cursor: Pagination cursor from previous ListTools call
+	//   * Empty string requests the first page
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns ToolList containing available tools and next page cursor.
-	// The ToolList includes each tool's name, description and input schema.
-	// Returns error if the operation fails.
+	// Returns:
+	// - ToolList containing:
+	//   * Available tools with name, description and input schema
+	//   * Next page cursor if more results exist
+	// - error if:
+	//   * Operation fails
+	//   * Context is cancelled
 	ListTools(ctx context.Context, cursor string, progressToken MustString) (*ToolList, error)
 
 	// CallTool executes a specific tool with the given arguments.
 	//
-	// name: The unique identifier of the tool to execute
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - name: Unique identifier of the tool to execute
+	// - args: Map of argument name-value pairs
+	//   * Must satisfy required arguments defined in tool's InputSchema field
+	// - progressToken: Unique token for tracking operation progress
+	//   * Used by ProgressReporter to emit progress updates if supported
+	//   * Optional - may be ignored if progress tracking not supported
 	//
-	// args: Map of argument name to value pairs to be passed to the tool.
-	// Must satisfy the required arguments defined in the tool's InputSchema field.
-	//
-	// progressToken: A unique token for tracking operation progress.
-	// If the implementation supports ProgressReporter, it will emit progress updates
-	// using this token. Progress reporting is optional - implementations may ignore
-	// this token if they don't support progress tracking.
-	// However, if progress reporting is implemented, this token must be used to
-	// correlate progress events with the specific operation.
-	//
-	// Returns ToolResult containing the execution output and error status.
-	// The Content field contains the tool's output data.
-	// The IsError field indicates if the tool execution failed.
-	// Returns error if tool not found, arguments are invalid, or execution fails.
+	// Returns:
+	// - ToolResult containing:
+	//   * Tool execution output
+	//   * Error status indicating execution success/failure
+	// - error if:
+	//   * Tool not found
+	//   * Arguments are invalid
+	//   * Execution fails
+	//   * Context is cancelled
 	CallTool(ctx context.Context, name string, args map[string]any, progressToken MustString) (ToolResult, error)
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
-// Implementations should maintain a channel that emits notifications whenever the list of
-// available tools changes, such as when tools are added, removed, or modified.
-//
-// The notifications are used by the MCP server to inform connected clients about tool list
-// changes via the "notifications/tools/list_changed" method. Clients can then refresh their
-// cached tool lists by calling ListTools again.
-//
-// The channel returned by WatchToolList should:
-//   - Remain open for the lifetime of the updater
-//   - Be safe for concurrent receives from multiple goroutines
-//   - Never block on sends - implementations should use buffered channels or
-//     drop notifications if receivers are not keeping up
-//
-// A struct{} is sent through the channel as the actual value is not important,
-// only the notification of a change matters.
-//
-// Example implementation:
-//
-//	type MyToolServer struct {
-//	    tools     []*Tool
-//	    updateChan chan struct{}
-//	}
-//
-//	func (s *MyToolServer) WatchToolList() <-chan struct{} {
-//	    return s.updateChan
-//	}
-//
-//	func (s *MyToolServer) AddTool(t *Tool) {
-//	    s.tools = append(s.tools, t)
-//	    // Notify listeners that tool list has changed
-//	    s.updateChan <- struct{}{}
-//	}
+// It maintains a channel that emits notifications whenever tools are added, removed, or modified.
 type ToolListUpdater interface {
+	// WatchToolList returns a channel that emits notifications when the tool list changes.
+	//
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the updater
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped notifications
+	//   * Emits struct{} as only the notification matters, not the value
 	WatchToolList() <-chan struct{}
 }
 
 // ProgressReporter provides an interface for reporting progress updates on long-running operations.
-// It's used to provide feedback during operations that may take significant time to complete.
-//
-// The progress updates are correlated to specific operations using the progressToken parameter
-// that is passed to various server methods (ListPrompts, GetPrompt, ListResources, etc).
-// Each progress update includes both the current progress value and total expected value,
-// allowing calculation of completion percentage.
-//
-// Implementations should maintain a channel that emits ProgressParams values containing:
-// - The progressToken matching the operation being reported on
-// - The current progress value
-// - The total expected value (when known)
-//
-// The channel should remain open for the lifetime of the reporter. Multiple goroutines
-// may receive from the channel simultaneously. Implementations must ensure thread-safe
-// access to the channel.
+// It maintains a channel that emits progress updates for operations identified by progress tokens.
 type ProgressReporter interface {
-	// ProgressReports returns a receive-only channel that emits ProgressParams values
-	// containing progress updates for long-running operations.
+	// ProgressReports returns a channel that emits progress updates for operations.
 	//
-	// The returned channel should:
-	// - Remain open for the lifetime of the reporter
-	// - Be safe for concurrent receives from multiple goroutines
-	// - Never block on sends - implementations should use buffered channels or
-	//   drop notifications if receivers are not keeping up
-	//
-	// The ProgressParams emitted will contain:
-	// - progressToken: Matching the token provided to the original operation
-	// - progress: Current progress value
-	// - total: Total expected value (when known)
-	//
-	// Progress percentage can be calculated as: (progress / total) * 100
-	// when total is non-zero.
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the reporter
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped notifications
+	//   * Emits ProgressParams containing:
+	//     - Progress token matching the original operation
+	//     - Current progress value
+	//     - Total expected value when known
+	//     - Progress percentage calculable as (progress/total)*100 when total is non-zero
 	ProgressReports() <-chan ProgressParams
 }
 
 // LogHandler provides an interface for streaming log messages from the MCP server to connected clients.
-// It allows clients to receive log messages in real-time and configure the minimum severity level
-// of messages they want to receive.
-//
-// Log messages are emitted through the channel returned by LogStreams() and include:
-// - The severity level of the message (debug, info, notice, warning, error, etc.)
-// - The logger name/identifier that generated the message
-// - The message content and any additional structured data/details
-//
-// The server uses this interface to:
-// 1. Stream log messages to clients via the "notifications/message" method
-// 2. Allow clients to filter messages by severity level
-//
-// Example implementation:
-//
-//	type MyLogHandler struct {
-//	    logChan chan LogParams
-//	    level   LogLevel
-//	    mu      sync.RWMutex
-//	}
-//
-//	func (h *MyLogHandler) LogStreams() <-chan LogParams {
-//	    return h.logChan
-//	}
-//
-//	func (h *MyLogHandler) SetLogLevel(level LogLevel) {
-//	    h.mu.Lock()
-//	    defer h.mu.Unlock()
-//	    h.level = level
-//	}
-//
-//	func (h *MyLogHandler) Log(msg LogParams) {
-//	    h.mu.RLock()
-//	    level := h.level
-//	    h.mu.RUnlock()
-//
-//	    if shouldEmit(msg.Level, level) {
-//	        h.logChan <- msg
-//	    }
-//	}
+// It maintains a channel for emitting log messages and allows configuration of minimum severity level.
 type LogHandler interface {
-	// LogStreams returns a receive-only channel that emits LogParams containing
-	// log messages and their metadata.
+	// LogStreams returns a channel that emits log messages with metadata.
 	//
-	// The returned channel should:
-	// - Remain open for the lifetime of the handler
-	// - Be safe for concurrent receives from multiple goroutines
-	// - Never block on sends - implementations should use buffered channels or
-	//   drop messages if receivers are not keeping up
-	//
-	// The LogParams emitted will contain:
-	// - Level: The severity level of the message
-	// - Logger: The name/identifier of the logger that generated the message
-	// - Data: The message content and any additional structured data
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the handler
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped messages
+	//   * Emits LogParams containing:
+	//     - Message severity level
+	//     - Logger name/identifier
+	//     - Message content and structured data
 	LogStreams() <-chan LogParams
 
-	// SetLogLevel configures the minimum severity level of log messages that
-	// will be emitted through the LogStreams channel.
+	// SetLogLevel configures the minimum severity level for emitted log messages.
 	//
-	// Messages with a severity level lower than the configured level will be
-	// filtered out and not sent through the channel.
-	//
-	// The level parameter must be one of the defined LogLevel constants:
-	// LogLevelDebug, LogLevelInfo, LogLevelNotice, LogLevelWarning,
-	// LogLevelError, LogLevelCritical, LogLevelAlert, or LogLevelEmergency
+	// Parameters:
+	// - level: Minimum severity level for messages
+	//   * Must be one of the defined LogLevel constants
+	//   * Messages below this level are filtered out
+	//   * Valid levels: Debug, Info, Notice, Warning, Error, Critical, Alert, Emergency
 	SetLogLevel(level LogLevel)
 }
 
@@ -423,6 +314,135 @@ type LogHandler interface {
 type RootsListWatcher interface {
 	// OnRootsListChanged is called when the client notifies that its root list has changed
 	OnRootsListChanged()
+}
+
+// RootsListHandler defines the interface for retrieving the list of root resources in the MCP protocol.
+// Root resources represent top-level entry points in the resource hierarchy that clients can access.
+type RootsListHandler interface {
+	// RootsList returns the list of available root resources.
+	//
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	//
+	// Returns:
+	// - RootList containing:
+	//   * URI: A unique identifier for accessing the root resource
+	//   * Name: A human-readable name for the root
+	// - error if:
+	//   * Operation fails
+	//   * Context is cancelled
+	RootsList(ctx context.Context) (RootList, error)
+}
+
+// RootsListUpdater provides an interface for monitoring changes to the available roots list.
+// Implementations should maintain a channel that emits notifications whenever the list of
+// available roots changes, such as when roots are added, removed, or modified.
+type RootsListUpdater interface {
+	// RootsListUpdates returns a channel that emits notifications when the root list changes.
+	//
+	// Returns:
+	// - Channel with the following characteristics:
+	//   * Remains open for the lifetime of the updater
+	//   * Safe for concurrent receives from multiple goroutines
+	//   * Never blocks on sends using buffered channels or dropped notifications
+	//   * Emits struct{} as only the notification matters, not the value
+	RootsListUpdates() <-chan struct{}
+}
+
+// SamplingHandler provides an interface for generating AI model responses based on conversation history.
+// It handles the core sampling functionality including managing conversation context, applying model preferences,
+// and generating appropriate responses while respecting token limits.
+type SamplingHandler interface {
+	// CreateSampleMessage generates a response message based on the provided conversation history and parameters.
+	//
+	// Parameters:
+	// - ctx: Context for cancellation and client-server communication
+	//   * Implementation must respect context cancellation and return early if cancelled
+	// - params: The parameters that control the sampling process, including:
+	//   * Messages: The conversation history as a sequence of user and assistant messages
+	//   * ModelPreferences: Preferences for model selection (cost, speed, intelligence priorities)
+	//   * SystemPrompts: System-level prompts that guide the model's behavior
+	//   * MaxTokens: Maximum number of tokens allowed in the generated response
+	//
+	// Returns:
+	// - SamplingResult containing:
+	//   * Role: The role of the generated message (typically "assistant")
+	//   * Content: The generated content with its type and data
+	//   * Model: The name/identifier of the model that generated the response
+	//   * StopReason: Why the generation stopped
+	// - error if:
+	//   * Model selection fails
+	//   * Generation fails
+	//   * Token limit is exceeded
+	//   * Context is cancelled
+	CreateSampleMessage(ctx context.Context, params SamplingParams) (SamplingResult, error)
+}
+
+// PromptListWatcher provides an interface for receiving notifications when the server's prompt list changes.
+// Implementations can use these notifications to update their internal state or trigger UI updates when
+// available prompts are added, removed, or modified.
+type PromptListWatcher interface {
+	// OnPromptListChanged is called when the server notifies that its prompt list has changed.
+	// This can happen when prompts are added, removed, or modified on the server side.
+	OnPromptListChanged()
+}
+
+// ResourceListWatcher provides an interface for receiving notifications when the server's resource list changes.
+// Implementations can use these notifications to update their internal state or trigger UI updates when
+// available resources are added, removed, or modified.
+type ResourceListWatcher interface {
+	// OnResourceListChanged is called when the server notifies that its resource list has changed.
+	// This can happen when resources are added, removed, or modified on the server side.
+	OnResourceListChanged()
+}
+
+// ResourceSubscribedWatcher provides an interface for receiving notifications when a subscribed resource changes.
+// Implementations can use these notifications to update their internal state or trigger UI updates when
+// specific resources they are interested in are modified.
+type ResourceSubscribedWatcher interface {
+	// OnResourceSubscribedChanged is called when the server notifies that a subscribed resource has changed.
+	//
+	// Parameters:
+	// - uri: The unique identifier of the resource that changed
+	OnResourceSubscribedChanged(uri string)
+}
+
+// ToolListWatcher provides an interface for receiving notifications when the server's tool list changes.
+// Implementations can use these notifications to update their internal state or trigger UI updates when
+// available tools are added, removed, or modified.
+type ToolListWatcher interface {
+	// OnToolListChanged is called when the server notifies that its tool list has changed.
+	// This can happen when tools are added, removed, or modified on the server side.
+	OnToolListChanged()
+}
+
+// ProgressListener provides an interface for receiving progress updates on long-running operations.
+// Implementations can use these notifications to update progress bars, status indicators, or other
+// UI elements that show operation progress to users.
+type ProgressListener interface {
+	// OnProgress is called when a progress update is received for an operation.
+	//
+	// Parameters:
+	// - params: Progress parameters containing:
+	//   * progressToken: Unique identifier correlating the progress update to a specific operation
+	//   * progress: Current progress value
+	//   * total: Total expected value (when known)
+	OnProgress(params ProgressParams)
+}
+
+// LogReceiver provides an interface for receiving log messages from the server.
+// Implementations can use these notifications to display logs in a UI, write them to a file,
+// or forward them to a logging service.
+type LogReceiver interface {
+	// OnLog is called when a log message is received from the server.
+	//
+	// Parameters:
+	// - params: Log parameters containing:
+	//   * Level: The severity level of the message
+	//   * Logger: The name/identifier of the logger
+	//   * Data: The message content and structured data
+	OnLog(params LogParams)
 }
 
 // PromptList represents a paginated list of prompts returned by ListPrompts.
@@ -571,7 +591,7 @@ type SamplingMessage struct {
 // type for non-text content. Either Text or Data should be populated based on the
 // content Type.
 type SamplingContent struct {
-	Type string `json:"type"`
+	Type ContentType `json:"type"`
 
 	Text string `json:"text"`
 

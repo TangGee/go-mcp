@@ -26,6 +26,23 @@ type mockResourceServer struct {
 	uri                 string
 }
 
+type mockSamplingHandler struct {
+	createMessageCalled bool
+}
+
+func (m *mockSamplingHandler) CreateSampleMessage(context.Context, SamplingParams) (SamplingResult, error) {
+	m.createMessageCalled = true
+	return SamplingResult{
+		Role: PromptRoleAssistant,
+		Content: SamplingContent{
+			Type: "text",
+			Text: "Test response",
+		},
+		Model:      "test-model",
+		StopReason: "completed",
+	}, nil
+}
+
 type mockToolServer struct {
 	listToolsCalled bool
 	callToolCalled  bool
@@ -120,7 +137,7 @@ func TestServerSessionHandlePrompts(t *testing.T) {
 	srv := &mockServer{}
 	s := newServer(srv,
 		WithPromptServer(promptServer),
-		WithWriteTimeout(time.Second),
+		WithServerWriteTimeout(time.Second),
 	)
 	sessID := s.startSession(context.Background(), writer)
 
@@ -180,7 +197,7 @@ func TestServerSessionHandleResources(t *testing.T) {
 	srv := &mockServer{}
 	s := newServer(srv,
 		WithResourceServer(resourceServer),
-		WithWriteTimeout(time.Second),
+		WithServerWriteTimeout(time.Second),
 	)
 	sessID := s.startSession(context.Background(), writer)
 
@@ -257,7 +274,7 @@ func TestServerSessionHandleTools(t *testing.T) {
 	srv := &mockServer{}
 	s := newServer(srv,
 		WithToolServer(toolServer),
-		WithWriteTimeout(time.Second),
+		WithServerWriteTimeout(time.Second),
 	)
 	sessID := s.startSession(context.Background(), writer)
 
@@ -310,6 +327,135 @@ func TestServerSessionHandleTools(t *testing.T) {
 	}
 	if toolServer.toolName != "test-tool" {
 		t.Errorf("got tool name %s, want test-tool", toolServer.toolName)
+	}
+}
+
+func TestClientSessionHandlePing(t *testing.T) {
+	writer := &mockWriter{}
+	sess := &clientSession{
+		id:           "test-session",
+		ctx:          context.Background(),
+		writter:      writer,
+		writeTimeout: time.Second,
+		pingInterval: time.Second,
+	}
+
+	err := sess.handlePing(MustString("1"))
+	if err != nil {
+		t.Fatalf("handlePing failed: %v", err)
+	}
+
+	var response jsonRPCMessage
+	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if response.JSONRPC != "2.0" {
+		t.Errorf("got JSONRPC version %s, want 2.0", response.JSONRPC)
+	}
+	if response.ID != MustString("1") {
+		t.Errorf("got ID %v, want 1", response.ID)
+	}
+	if response.Error != nil {
+		t.Errorf("got error %v, want nil", response.Error)
+	}
+}
+
+func TestClientSessionHandleRootsList(t *testing.T) {
+	writer := &mockWriter{}
+	handler := &mockRootsListHandler{}
+	sess := &clientSession{
+		id:           "test-session",
+		ctx:          context.Background(),
+		writter:      writer,
+		writeTimeout: time.Second,
+	}
+
+	err := sess.handleRootsList("1", handler)
+	if err != nil {
+		t.Fatalf("handleRootsList failed: %v", err)
+	}
+
+	if !handler.listRootsCalled {
+		t.Error("RootsList was not called")
+	}
+
+	var response jsonRPCMessage
+	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	var result RootList
+	err = json.Unmarshal(response.Result, &result)
+	if err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if len(result.Roots) != 1 {
+		t.Errorf("got %d roots, want 1", len(result.Roots))
+	}
+	if result.Roots[0].URI != "test://root" {
+		t.Errorf("got URI %s, want test://root", result.Roots[0].URI)
+	}
+}
+
+func TestClientSessionHandleSamplingCreateMessage(t *testing.T) {
+	writer := &mockWriter{}
+	handler := &mockSamplingHandler{}
+	sess := &clientSession{
+		id:           "test-session",
+		ctx:          context.Background(),
+		writter:      writer,
+		writeTimeout: time.Second,
+	}
+
+	params := SamplingParams{
+		Messages: []SamplingMessage{
+			{
+				Role: PromptRoleUser,
+				Content: SamplingContent{
+					Type: "text",
+					Text: "Hello",
+				},
+			},
+		},
+		ModelPreferences: SamplingModelPreferences{
+			CostPriority:         1,
+			SpeedPriority:        2,
+			IntelligencePriority: 3,
+		},
+		SystemPrompts: "Be helpful",
+		MaxTokens:     100,
+	}
+
+	err := sess.handleSamplingCreateMessage("1", params, handler)
+	if err != nil {
+		t.Fatalf("handleSamplingCreateMessage failed: %v", err)
+	}
+
+	if !handler.createMessageCalled {
+		t.Error("CreateSampleMessage was not called")
+	}
+
+	var response jsonRPCMessage
+	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
+	if err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	var result SamplingResult
+	err = json.Unmarshal(response.Result, &result)
+	if err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if result.Role != PromptRoleAssistant {
+		t.Errorf("got role %s, want assistant", result.Role)
+	}
+	if result.Content.Text != "Test response" {
+		t.Errorf("got text %s, want 'Test response'", result.Content.Text)
 	}
 }
 
