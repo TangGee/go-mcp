@@ -53,7 +53,6 @@ type server struct {
 var (
 	defaultServerWriteTimeout = 30 * time.Second
 	defaultServerReadTimeout  = 30 * time.Second
-	defaultServerPingInterval = 30 * time.Second
 )
 
 // WithPromptServer sets the prompt server for the server.
@@ -141,6 +140,7 @@ func WithServerReadTimeout(timeout time.Duration) ServerOption {
 }
 
 // WithServerPingInterval sets the ping interval for the server.
+// If set to 0, the server will not send pings.
 func WithServerPingInterval(interval time.Duration) ServerOption {
 	return func(s *server) {
 		s.pingInterval = interval
@@ -164,9 +164,6 @@ func newServer(srv Server, options ...ServerOption) server {
 	}
 	if s.readTimeout == 0 {
 		s.readTimeout = defaultServerReadTimeout
-	}
-	if s.pingInterval == 0 {
-		s.pingInterval = defaultServerPingInterval
 	}
 
 	s.capabilities = ServerCapabilities{}
@@ -283,7 +280,7 @@ func (s server) listenResourcesList() {
 }
 
 func (s server) listenResourcesSubscribe() {
-	subscribes := s.resourceSubscribedUpdater.ResourceSubscriberUpdates()
+	subscribes := s.resourceSubscribedUpdater.ResourceSubscribedUpdates()
 	var uri string
 
 	for {
@@ -302,7 +299,7 @@ func (s server) listenResourcesSubscribe() {
 }
 
 func (s server) listenToolsList() {
-	lists := s.toolListUpdater.WatchToolList()
+	lists := s.toolListUpdater.ToolListUpdates()
 
 	for {
 		select {
@@ -385,6 +382,9 @@ func (s server) startSession(ctx context.Context, w io.Writer) string {
 
 	s.sessions.Store(sessID, sess)
 	go sess.listen()
+	if s.pingInterval > 0 {
+		go sess.pings()
+	}
 
 	return sessID
 }
@@ -439,7 +439,7 @@ func (s server) handleMsg(r io.Reader, sessionID string) error {
 	return nil
 }
 
-func (s server) handleBasicMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handleBasicMessages(sess *serverSession, msg JSONRPCMessage) error {
 	switch msg.Method {
 	case methodPing:
 		return sess.handlePing(msg.ID)
@@ -454,20 +454,20 @@ func (s server) handleBasicMessages(sess *serverSession, msg jsonRPCMessage) err
 	return nil
 }
 
-func (s server) handlePromptMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handlePromptMessages(sess *serverSession, msg JSONRPCMessage) error {
 	if s.promptServer == nil {
 		return nil
 	}
 
 	switch msg.Method {
-	case methodPromptsList:
-		var params promptsListParams
+	case MethodPromptsList:
+		var params PromptsListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		return sess.handlePromptsList(msg.ID, params, s.promptServer)
-	case methodPromptsGet:
-		var params promptsGetParams
+	case MethodPromptsGet:
+		var params PromptsGetParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -476,32 +476,32 @@ func (s server) handlePromptMessages(sess *serverSession, msg jsonRPCMessage) er
 	return nil
 }
 
-func (s server) handleResourceMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handleResourceMessages(sess *serverSession, msg JSONRPCMessage) error {
 	if s.resourceServer == nil {
 		return nil
 	}
 
 	switch msg.Method {
-	case methodResourcesList:
-		var params resourcesListParams
+	case MethodResourcesList:
+		var params ResourcesListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		return sess.handleResourcesList(msg.ID, params, s.resourceServer)
-	case methodResourcesRead:
-		var params resourcesReadParams
+	case MethodResourcesRead:
+		var params ResourcesReadParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		return sess.handleResourcesRead(msg.ID, params, s.resourceServer)
-	case methodResourcesTemplatesList:
-		var params resourcesTemplatesListParams
+	case MethodResourcesTemplatesList:
+		var params ResourcesTemplatesListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		return sess.handleResourcesListTemplates(msg.ID, params, s.resourceServer)
-	case methodResourcesSubscribe:
-		var params resourcesSubscribeParams
+	case MethodResourcesSubscribe:
+		var params ResourcesSubscribeParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -510,20 +510,20 @@ func (s server) handleResourceMessages(sess *serverSession, msg jsonRPCMessage) 
 	return nil
 }
 
-func (s server) handleToolMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handleToolMessages(sess *serverSession, msg JSONRPCMessage) error {
 	if s.toolServer == nil {
 		return nil
 	}
 
 	switch msg.Method {
-	case methodToolsList:
-		var params toolsListParams
+	case MethodToolsList:
+		var params ToolsListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		return sess.handleToolsList(msg.ID, params, s.toolServer)
-	case methodToolsCall:
-		var params toolsCallParams
+	case MethodToolsCall:
+		var params ToolsCallParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -532,26 +532,26 @@ func (s server) handleToolMessages(sess *serverSession, msg jsonRPCMessage) erro
 	return nil
 }
 
-func (s server) handleCompletionMessages(sess *serverSession, msg jsonRPCMessage) error {
-	if msg.Method != methodCompletionComplete {
+func (s server) handleCompletionMessages(sess *serverSession, msg JSONRPCMessage) error {
+	if msg.Method != MethodCompletionComplete {
 		return nil
 	}
 
-	var params completionCompleteParams
+	var params CompletionCompleteParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return errInvalidJSON
 	}
 
 	switch params.Ref.Type {
-	case "ref/prompt":
-		return sess.handleCompletePrompt(msg.ID, params.Ref.Name, params.Argument, s.promptServer)
-	case "ref/resource":
-		return sess.handleCompleteResource(msg.ID, params.Ref.Name, params.Argument, s.resourceServer)
+	case CompletionRefPrompt:
+		return sess.handleCompletePrompt(msg.ID, params, s.promptServer)
+	case CompletionRefResource:
+		return sess.handleCompleteResource(msg.ID, params, s.resourceServer)
 	}
 	return nil
 }
 
-func (s server) handleNotificationMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handleNotificationMessages(sess *serverSession, msg JSONRPCMessage) error {
 	switch msg.Method {
 	case methodNotificationsInitialized:
 		sess.handleNotificationsInitialized()
@@ -570,7 +570,7 @@ func (s server) handleNotificationMessages(sess *serverSession, msg jsonRPCMessa
 	return nil
 }
 
-func (s server) handleResultMessages(sess *serverSession, msg jsonRPCMessage) error {
+func (s server) handleResultMessages(sess *serverSession, msg JSONRPCMessage) error {
 	if msg.Method != "" {
 		return nil
 	}

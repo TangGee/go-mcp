@@ -70,7 +70,7 @@ func TestClientStart(t *testing.T) {
 	}
 
 	// Clean up
-	close(c.closeChan)
+	c.stop()
 }
 
 func TestClientHandleMsg(t *testing.T) {
@@ -94,7 +94,7 @@ func TestClientHandleMsg(t *testing.T) {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -125,7 +125,7 @@ func TestClientStartSession(t *testing.T) {
 	}
 
 	// Clean up
-	close(c.closeChan)
+	c.stop()
 }
 
 func TestClientGetPrompt(t *testing.T) {
@@ -140,7 +140,7 @@ func TestClientGetPrompt(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -155,12 +155,12 @@ func TestClientGetPrompt(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodPromptsGet {
-			t.Errorf("expected method %s, got %s", methodPromptsGet, msg.Method)
+		if msg.Method != MethodPromptsGet {
+			t.Errorf("expected method %s, got %s", MethodPromptsGet, msg.Method)
 		}
 
 		// Verify params
-		var params promptsGetParams
+		var params PromptsGetParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -193,8 +193,8 @@ func TestClientGetPrompt(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -245,7 +245,7 @@ func TestClientCompletesPrompt(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -260,17 +260,17 @@ func TestClientCompletesPrompt(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodCompletionComplete {
-			t.Errorf("expected method %s, got %s", methodCompletionComplete, msg.Method)
+		if msg.Method != MethodCompletionComplete {
+			t.Errorf("expected method %s, got %s", MethodCompletionComplete, msg.Method)
 		}
 
 		// Verify params
-		var params completionCompleteParams
+		var params CompletionCompleteParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
 		}
-		if params.Ref.Type != "ref/prompt" {
+		if params.Ref.Type != CompletionRefPrompt {
 			t.Errorf("expected ref type ref/prompt, got %s", params.Ref.Type)
 		}
 		if params.Ref.Name != "test-prompt" {
@@ -298,8 +298,8 @@ func TestClientCompletesPrompt(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -348,7 +348,7 @@ func TestClientListPrompts(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -363,8 +363,8 @@ func TestClientListPrompts(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodPromptsList {
-			t.Errorf("expected method %s, got %s", methodPromptsList, msg.Method)
+		if msg.Method != MethodPromptsList {
+			t.Errorf("expected method %s, got %s", MethodPromptsList, msg.Method)
 		}
 
 		// Send mock response
@@ -392,8 +392,8 @@ func TestClientListPrompts(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -439,7 +439,7 @@ func TestClientListResources(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -454,12 +454,12 @@ func TestClientListResources(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodResourcesList {
-			t.Errorf("expected method %s, got %s", methodResourcesList, msg.Method)
+		if msg.Method != MethodResourcesList {
+			t.Errorf("expected method %s, got %s", MethodResourcesList, msg.Method)
 		}
 
 		// Verify params
-		var params resourcesListParams
+		var params ResourcesListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -496,8 +496,8 @@ func TestClientListResources(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -543,7 +543,7 @@ func TestClientReadResource(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -558,12 +558,12 @@ func TestClientReadResource(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodResourcesRead {
-			t.Errorf("expected method %s, got %s", methodResourcesRead, msg.Method)
+		if msg.Method != MethodResourcesRead {
+			t.Errorf("expected method %s, got %s", MethodResourcesRead, msg.Method)
 		}
 
 		// Verify params
-		var params resourcesReadParams
+		var params ResourcesReadParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -588,8 +588,8 @@ func TestClientReadResource(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -638,7 +638,7 @@ func TestClientListResourceTemplates(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -653,12 +653,12 @@ func TestClientListResourceTemplates(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodResourcesTemplatesList {
-			t.Errorf("expected method %s, got %s", methodResourcesTemplatesList, msg.Method)
+		if msg.Method != MethodResourcesTemplatesList {
+			t.Errorf("expected method %s, got %s", MethodResourcesTemplatesList, msg.Method)
 		}
 
 		// Verify params
-		var params resourcesTemplatesListParams
+		var params ResourcesTemplatesListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -687,8 +687,8 @@ func TestClientListResourceTemplates(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -731,7 +731,7 @@ func TestClientCompletesResourceTemplate(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -746,17 +746,17 @@ func TestClientCompletesResourceTemplate(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodCompletionComplete {
-			t.Errorf("expected method %s, got %s", methodCompletionComplete, msg.Method)
+		if msg.Method != MethodCompletionComplete {
+			t.Errorf("expected method %s, got %s", MethodCompletionComplete, msg.Method)
 		}
 
 		// Verify params
-		var params completionCompleteParams
+		var params CompletionCompleteParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
 		}
-		if params.Ref.Type != "ref/resource" {
+		if params.Ref.Type != CompletionRefResource {
 			t.Errorf("expected ref type ref/resource, got %s", params.Ref.Type)
 		}
 		if params.Ref.URI != "test://resource/{name}" {
@@ -784,8 +784,8 @@ func TestClientCompletesResourceTemplate(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -834,7 +834,7 @@ func TestClientSubscribeResource(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -849,12 +849,12 @@ func TestClientSubscribeResource(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodResourcesSubscribe {
-			t.Errorf("expected method %s, got %s", methodResourcesSubscribe, msg.Method)
+		if msg.Method != MethodResourcesSubscribe {
+			t.Errorf("expected method %s, got %s", MethodResourcesSubscribe, msg.Method)
 		}
 
 		// Verify params
-		var params resourcesSubscribeParams
+		var params ResourcesSubscribeParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -864,8 +864,8 @@ func TestClientSubscribeResource(t *testing.T) {
 		}
 
 		// Send mock response
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  json.RawMessage("null"), // Subscribe returns void/null
 		}
@@ -897,7 +897,7 @@ func TestClientListTools(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -912,12 +912,12 @@ func TestClientListTools(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodToolsList {
-			t.Errorf("expected method %s, got %s", methodToolsList, msg.Method)
+		if msg.Method != MethodToolsList {
+			t.Errorf("expected method %s, got %s", MethodToolsList, msg.Method)
 		}
 
 		// Verify params
-		var params toolsListParams
+		var params ToolsListParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -931,7 +931,7 @@ func TestClientListTools(t *testing.T) {
 
 		// Send mock response
 		mockResponse := ToolList{
-			Tools: []*Tool{
+			Tools: []Tool{
 				{
 					Name:        "test-tool-1",
 					Description: "First test tool",
@@ -960,8 +960,8 @@ func TestClientListTools(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -1007,7 +1007,7 @@ func TestClientInitialize(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -1067,8 +1067,8 @@ func TestClientInitialize(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -1099,7 +1099,7 @@ func TestClientCallTool(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -1114,12 +1114,12 @@ func TestClientCallTool(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodToolsCall {
-			t.Errorf("expected method %s, got %s", methodToolsCall, msg.Method)
+		if msg.Method != MethodToolsCall {
+			t.Errorf("expected method %s, got %s", MethodToolsCall, msg.Method)
 		}
 
 		// Verify params
-		var params toolsCallParams
+		var params ToolsCallParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			t.Errorf("failed to decode params: %v", err)
 			return
@@ -1159,8 +1159,8 @@ func TestClientCallTool(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -1200,6 +1200,18 @@ func TestClientCallTool(t *testing.T) {
 
 func (m *mockClient) Info() Info {
 	return Info{Name: "test-client", Version: "1.0"}
+}
+
+func (m *mockClient) RequirePromptServer() bool {
+	return false
+}
+
+func (m *mockClient) RequireResourceServer() bool {
+	return false
+}
+
+func (m *mockClient) RequireToolServer() bool {
+	return false
 }
 
 type mockRootsListHandler struct {

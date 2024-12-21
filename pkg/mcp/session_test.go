@@ -64,7 +64,7 @@ func TestServerSessionHandlePing(t *testing.T) {
 		t.Fatalf("handlePing failed: %v", err)
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -107,7 +107,7 @@ func TestServerSessionHandleInitialize(t *testing.T) {
 		t.Fatalf("handleInitialize failed: %v", err)
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -144,13 +144,13 @@ func TestServerSessionHandlePrompts(t *testing.T) {
 	initServerSession(t, &s, sessID)
 
 	// Test ListPrompts
-	listParams := promptsListParams{
+	listParams := PromptsListParams{
 		Cursor: "",
 	}
 	listParamsBs, _ := json.Marshal(listParams)
-	listMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
-		Method:  methodPromptsList,
+	listMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodPromptsList,
 		ID:      MustString("1"),
 		Params:  listParamsBs,
 	}
@@ -164,20 +164,20 @@ func TestServerSessionHandlePrompts(t *testing.T) {
 	}
 
 	// Test GetPrompt
-	getParams := promptsGetParams{
+	getParams := PromptsGetParams{
 		Name: "test-prompt",
 		Arguments: map[string]any{
 			"test-arg": "test-value",
 		},
-		Meta: paramsMeta{
+		Meta: ParamsMeta{
 			ProgressToken: "123",
 		},
 	}
 	getParamsBs, _ := json.Marshal(getParams)
-	getMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	getMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		ID:      MustString("2"),
-		Method:  methodPromptsGet,
+		Method:  MethodPromptsGet,
 		Params:  getParamsBs,
 	}
 	getBs, _ := json.Marshal(getMsg)
@@ -204,13 +204,13 @@ func TestServerSessionHandleResources(t *testing.T) {
 	initServerSession(t, &s, sessID)
 
 	// Test ListResources
-	listParams := resourcesListParams{
+	listParams := ResourcesListParams{
 		Cursor: "",
 	}
 	listParamsBs, _ := json.Marshal(listParams)
-	listMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
-		Method:  methodResourcesList,
+	listMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodResourcesList,
 		ID:      MustString("1"),
 		Params:  listParamsBs,
 	}
@@ -224,14 +224,14 @@ func TestServerSessionHandleResources(t *testing.T) {
 	}
 
 	// Test ReadResource
-	readParams := resourcesReadParams{
+	readParams := ResourcesReadParams{
 		URI: "test-uri",
 	}
 	readParamsBs, _ := json.Marshal(readParams)
-	readMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	readMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		ID:      MustString("2"),
-		Method:  methodResourcesRead,
+		Method:  MethodResourcesRead,
 		Params:  readParamsBs,
 	}
 	readBs, _ := json.Marshal(readMsg)
@@ -244,14 +244,14 @@ func TestServerSessionHandleResources(t *testing.T) {
 	}
 
 	// Test Subscribe
-	subscribeParams := resourcesSubscribeParams{
+	subscribeParams := ResourcesSubscribeParams{
 		URI: "test-uri",
 	}
 	subscribeParamsBs, _ := json.Marshal(subscribeParams)
-	subscribeMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	subscribeMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		ID:      MustString("3"),
-		Method:  methodResourcesSubscribe,
+		Method:  MethodResourcesSubscribe,
 		Params:  subscribeParamsBs,
 	}
 	subscribeBs, _ := json.Marshal(subscribeMsg)
@@ -281,16 +281,16 @@ func TestServerSessionHandleTools(t *testing.T) {
 	initServerSession(t, &s, sessID)
 
 	// Test ListTools
-	listParams := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
-		Method:  methodToolsList,
+	listParams := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsList,
 		ID:      MustString("1"),
 		Params:  []byte{},
 	}
 	listParamsBs, _ := json.Marshal(listParams)
-	listMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
-		Method:  methodToolsList,
+	listMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsList,
 		ID:      MustString("1"),
 		Params:  listParamsBs,
 	}
@@ -304,17 +304,17 @@ func TestServerSessionHandleTools(t *testing.T) {
 	}
 
 	// Test CallTool
-	callParams := toolsCallParams{
+	callParams := ToolsCallParams{
 		Name: "test-tool",
 		Arguments: map[string]any{
 			"test-arg": "test-value",
 		},
 	}
 	callParamsBs, _ := json.Marshal(callParams)
-	callMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	callMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		ID:      MustString("2"),
-		Method:  methodToolsCall,
+		Method:  MethodToolsCall,
 		Params:  callParamsBs,
 	}
 	callBs, _ := json.Marshal(callMsg)
@@ -345,7 +345,7 @@ func TestClientSessionHandlePing(t *testing.T) {
 		t.Fatalf("handlePing failed: %v", err)
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -381,7 +381,7 @@ func TestClientSessionHandleRootsList(t *testing.T) {
 		t.Error("RootsList was not called")
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -439,7 +439,7 @@ func TestClientSessionHandleSamplingCreateMessage(t *testing.T) {
 		t.Error("CreateSampleMessage was not called")
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -466,8 +466,8 @@ func initServerSession(t *testing.T, server *server, sessID string) {
 		Capabilities:    ClientCapabilities{},
 	}
 	initParamsBs, _ := json.Marshal(initParams)
-	initMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	initMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		Method:  methodInitialize,
 		ID:      MustString("1"),
 		Params:  initParamsBs,
@@ -477,8 +477,8 @@ func initServerSession(t *testing.T, server *server, sessID string) {
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
-	initNotifMsg := jsonRPCMessage{
-		JSONRPC: jsonRPCVersion,
+	initNotifMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
 		Method:  methodNotificationsInitialized,
 		ID:      MustString("2"),
 	}
@@ -489,7 +489,7 @@ func initServerSession(t *testing.T, server *server, sessID string) {
 	}
 }
 
-func (m *mockPromptServer) ListPrompts(context.Context, string, MustString) (PromptList, error) {
+func (m *mockPromptServer) ListPrompts(context.Context, PromptsListParams) (PromptList, error) {
 	m.listPromptsCalled = true
 	return PromptList{
 		Prompts: []Prompt{
@@ -498,12 +498,12 @@ func (m *mockPromptServer) ListPrompts(context.Context, string, MustString) (Pro
 	}, nil
 }
 
-func (m *mockPromptServer) GetPrompt(_ context.Context, name string, _ map[string]any, _ MustString) (Prompt, error) {
+func (m *mockPromptServer) GetPrompt(_ context.Context, _ PromptsGetParams) (PromptResult, error) {
 	m.getPromptCalled = true
-	return Prompt{Name: name}, nil
+	return PromptResult{Description: "Test Prompt"}, nil
 }
 
-func (m *mockPromptServer) CompletesPrompt(context.Context, string, CompletionArgument) (CompletionResult, error) {
+func (m *mockPromptServer) CompletesPrompt(context.Context, CompletionCompleteParams) (CompletionResult, error) {
 	return CompletionResult{}, nil
 }
 
@@ -514,54 +514,56 @@ func (m *mockPromptListWatcher) PromptListUpdates() <-chan struct{} {
 	return m.ch
 }
 
-func (m *mockResourceServer) ListResources(_ context.Context, cursor string, _ MustString) (*ResourceList, error) {
+func (m *mockResourceServer) ListResources(_ context.Context, params ResourcesListParams) (*ResourceList, error) {
 	m.listResourcesCalled = true
 	return &ResourceList{
 		Resources: []Resource{
 			{URI: "test-resource", Name: "Test Resource"},
 		},
-		NextCursor: cursor,
+		NextCursor: params.Cursor,
 	}, nil
 }
 
-func (m *mockResourceServer) ReadResource(_ context.Context, uri string, _ MustString) (*Resource, error) {
+func (m *mockResourceServer) ReadResource(_ context.Context, params ResourcesReadParams) (*Resource, error) {
 	m.readResourceCalled = true
-	return &Resource{URI: uri, Name: "Test Resource"}, nil
+	return &Resource{URI: params.URI, Name: "Test Resource"}, nil
 }
 
-func (m *mockResourceServer) ListResourceTemplates(_ context.Context, _ MustString) ([]ResourceTemplate, error) {
+func (m *mockResourceServer) ListResourceTemplates(
+	_ context.Context,
+	_ ResourcesTemplatesListParams,
+) ([]ResourceTemplate, error) {
 	m.listTemplatesCalled = true
 	return []ResourceTemplate{
 		{URITemplate: "test-template", Name: "Test Template"},
 	}, nil
 }
 
-func (m *mockResourceServer) SubscribeResource(uri string) {
+func (m *mockResourceServer) SubscribeResource(params ResourcesSubscribeParams) {
 	m.subscribeCalled = true
-	m.uri = uri
+	m.uri = params.URI
 }
 
 func (m *mockResourceServer) CompletesResourceTemplate(
 	_ context.Context,
-	_ string,
-	_ CompletionArgument,
+	_ CompletionCompleteParams,
 ) (CompletionResult, error) {
 	return CompletionResult{}, nil
 }
 
-func (m *mockToolServer) ListTools(_ context.Context, cursor string, _ MustString) (*ToolList, error) {
+func (m *mockToolServer) ListTools(_ context.Context, params ToolsListParams) (*ToolList, error) {
 	m.listToolsCalled = true
 	return &ToolList{
-		Tools: []*Tool{
+		Tools: []Tool{
 			{Name: "test-tool", Description: "Test Tool"},
 		},
-		NextCursor: cursor,
+		NextCursor: params.Cursor,
 	}, nil
 }
 
-func (m *mockToolServer) CallTool(_ context.Context, name string, _ map[string]any, _ MustString) (ToolResult, error) {
+func (m *mockToolServer) CallTool(_ context.Context, params ToolsCallParams) (ToolResult, error) {
 	m.callToolCalled = true
-	m.toolName = name
+	m.toolName = params.Name
 	return ToolResult{
 		Content: []Content{{Type: ContentTypeText, Text: "Tool executed"}},
 		IsError: false,

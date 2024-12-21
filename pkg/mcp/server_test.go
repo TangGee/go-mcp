@@ -94,7 +94,7 @@ func TestServerHandleMsg(t *testing.T) {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
 
-	var response jsonRPCMessage
+	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
 	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
@@ -139,7 +139,7 @@ func TestServerListRoots(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -154,8 +154,8 @@ func TestServerListRoots(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodRootsList {
-			t.Errorf("expected method %s, got %s", methodRootsList, msg.Method)
+		if msg.Method != MethodRootsList {
+			t.Errorf("expected method %s, got %s", MethodRootsList, msg.Method)
 		}
 
 		// Send mock response
@@ -170,8 +170,8 @@ func TestServerListRoots(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}
@@ -213,7 +213,7 @@ func TestServerCreateSampleMessage(t *testing.T) {
 	// Start goroutine to handle mock response
 	go func() {
 		// Loop until we get a request
-		var msg jsonRPCMessage
+		var msg JSONRPCMessage
 		for {
 			wbs := writer.getWritten()
 			if len(wbs) == 0 {
@@ -228,8 +228,8 @@ func TestServerCreateSampleMessage(t *testing.T) {
 		}
 
 		// Verify request
-		if msg.Method != methodSamplingCreateMessage {
-			t.Errorf("expected method %s, got %s", methodSamplingCreateMessage, msg.Method)
+		if msg.Method != MethodSamplingCreateMessage {
+			t.Errorf("expected method %s, got %s", MethodSamplingCreateMessage, msg.Method)
 		}
 
 		// Verify params
@@ -254,8 +254,8 @@ func TestServerCreateSampleMessage(t *testing.T) {
 			t.Errorf("failed to marshal mock response: %v", err)
 		}
 
-		responseMsg := jsonRPCMessage{
-			JSONRPC: jsonRPCVersion,
+		responseMsg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Result:  mockBs,
 		}

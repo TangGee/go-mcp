@@ -11,6 +11,9 @@ import (
 // Client represents the main MCP client interface that users will implement.
 type Client interface {
 	Info() Info
+	RequirePromptServer() bool
+	RequireResourceServer() bool
+	RequireToolServer() bool
 }
 
 // ClientOption is a function that configures a client.
@@ -49,7 +52,6 @@ type client struct {
 var (
 	defaultClientWriteTimeout = 30 * time.Second
 	defaultClientReadTimeout  = 30 * time.Second
-	defaultClientPingInterval = 30 * time.Second
 )
 
 // WithRootsListHandler sets the roots list handler for the client.
@@ -140,9 +142,6 @@ func newClient(cli Client, options ...ClientOption) client {
 	c := client{
 		info:            cli.Info(),
 		sessions:        new(sync.Map),
-		writeTimeout:    defaultClientWriteTimeout,
-		readTimeout:     defaultClientReadTimeout,
-		pingInterval:    defaultClientPingInterval,
 		sessionStopChan: make(chan string),
 		closeChan:       make(chan struct{}),
 	}
@@ -155,9 +154,6 @@ func newClient(cli Client, options ...ClientOption) client {
 	}
 	if c.readTimeout == 0 {
 		c.readTimeout = defaultClientReadTimeout
-	}
-	if c.pingInterval == 0 {
-		c.pingInterval = defaultClientPingInterval
 	}
 
 	c.capabilities = ClientCapabilities{}
@@ -174,28 +170,36 @@ func newClient(cli Client, options ...ClientOption) client {
 
 	c.requiredServerCapabilities = ServerCapabilities{}
 
-	if c.promptListWatcher != nil {
-		c.requiredServerCapabilities.Prompts = &PromptsCapability{
-			ListChanged: true,
+	if cli.RequirePromptServer() {
+		c.requiredServerCapabilities.Prompts = &PromptsCapability{}
+		if c.promptListWatcher != nil {
+			c.requiredServerCapabilities.Prompts = &PromptsCapability{
+				ListChanged: true,
+			}
 		}
 	}
 
-	rlc := false
-	rsc := false
-	if c.resourceListWatcher != nil {
-		rlc = true
-	}
-	if c.resourceSubscribedWatcher != nil {
-		rsc = true
-	}
-	c.requiredServerCapabilities.Resources = &ResourcesCapability{
-		ListChanged: rlc,
-		Subscribe:   rsc,
+	if cli.RequireResourceServer() {
+		rlc := false
+		rsc := false
+		if c.resourceListWatcher != nil {
+			rlc = true
+		}
+		if c.resourceSubscribedWatcher != nil {
+			rsc = true
+		}
+		c.requiredServerCapabilities.Resources = &ResourcesCapability{
+			ListChanged: rlc,
+			Subscribe:   rsc,
+		}
 	}
 
-	if c.toolListWatcher != nil {
-		c.requiredServerCapabilities.Tools = &ToolsCapability{
-			ListChanged: true,
+	if cli.RequireToolServer() {
+		c.requiredServerCapabilities.Tools = &ToolsCapability{}
+		if c.toolListWatcher != nil {
+			c.requiredServerCapabilities.Tools = &ToolsCapability{
+				ListChanged: true,
+			}
 		}
 	}
 
@@ -260,6 +264,9 @@ func (c client) startSession(ctx context.Context, w io.Writer, id string) {
 
 	c.sessions.Store(id, sess)
 	go sess.listen()
+	if c.pingInterval > 0 {
+		go sess.pings()
+	}
 }
 
 func (c client) handleMsg(r io.Reader, sessionID string) error {
@@ -302,31 +309,31 @@ func (c client) handleMsg(r io.Reader, sessionID string) error {
 	return nil
 }
 
-func (c client) handleBasicMessages(sess *clientSession, msg jsonRPCMessage) error {
+func (c client) handleBasicMessages(sess *clientSession, msg JSONRPCMessage) error {
 	if msg.Method != methodPing {
 		return nil
 	}
 	return sess.handlePing(msg.ID)
 }
 
-func (c client) handleRootMessages(sess *clientSession, msg jsonRPCMessage) error {
+func (c client) handleRootMessages(sess *clientSession, msg JSONRPCMessage) error {
 	if c.rootsListHandler != nil {
 		return nil
 	}
 
-	if msg.Method != methodRootsList {
+	if msg.Method != MethodRootsList {
 		return nil
 	}
 
 	return sess.handleRootsList(msg.ID, c.rootsListHandler)
 }
 
-func (c client) handleSamplingMessages(sess *clientSession, msg jsonRPCMessage) error {
+func (c client) handleSamplingMessages(sess *clientSession, msg JSONRPCMessage) error {
 	if c.samplingHandler != nil {
 		return nil
 	}
 
-	if msg.Method != methodSamplingCreateMessage {
+	if msg.Method != MethodSamplingCreateMessage {
 		return nil
 	}
 	var params SamplingParams
@@ -336,7 +343,7 @@ func (c client) handleSamplingMessages(sess *clientSession, msg jsonRPCMessage) 
 	return sess.handleSamplingCreateMessage(msg.ID, params, c.samplingHandler)
 }
 
-func (c client) handleNotificationMessages(sess *clientSession, msg jsonRPCMessage) error {
+func (c client) handleNotificationMessages(sess *clientSession, msg JSONRPCMessage) error {
 	switch msg.Method {
 	case methodNotificationsCancelled:
 		var params notificationsCancelledParams
@@ -352,9 +359,9 @@ func (c client) handleNotificationMessages(sess *clientSession, msg jsonRPCMessa
 		if c.resourceListWatcher != nil {
 			c.resourceListWatcher.OnResourceListChanged()
 		}
-	case methodNotificationsResourcesSubscribe:
+	case methodNotificationsResourcesUpdated:
 		if c.resourceSubscribedWatcher != nil {
-			var params resourcesSubscribeParams
+			var params ResourcesSubscribeParams
 			if err := json.Unmarshal(msg.Params, &params); err != nil {
 				return errInvalidJSON
 			}
@@ -381,7 +388,7 @@ func (c client) handleNotificationMessages(sess *clientSession, msg jsonRPCMessa
 	return nil
 }
 
-func (c client) handleResultMessages(sess *clientSession, msg jsonRPCMessage) error {
+func (c client) handleResultMessages(sess *clientSession, msg JSONRPCMessage) error {
 	if msg.Method != "" {
 		return nil
 	}
@@ -500,4 +507,13 @@ func (c client) callTool(
 	}
 	sess, _ := ss.(*clientSession)
 	return sess.callTool(name, arguments, progressToken)
+}
+
+func (c client) stop() {
+	c.sessions.Range(func(_, value any) bool {
+		sess, _ := value.(*clientSession)
+		sess.cancel()
+		return true
+	})
+	close(c.closeChan)
 }

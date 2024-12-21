@@ -1,6 +1,8 @@
 package mcp
 
-import "sync"
+import (
+	"sync"
+)
 
 type mockWriter struct {
 	sync.Mutex

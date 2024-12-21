@@ -87,29 +87,40 @@ func ctxWithSessionID(ctx context.Context, id string) context.Context {
 }
 
 func (s *serverSession) listen() {
-	pingTicker := time.NewTicker(s.pingInterval)
-
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.stopChan <- s.id
 			return
 		case <-s.promptsListChan:
-			_ = writeResult(s.ctx, s.writter, methodNotificationsPromptsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsPromptsListChanged, nil)
 		case <-s.resourcesListChan:
-			_ = writeResult(s.ctx, s.writter, methodNotificationsResourcesListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsResourcesListChanged, nil)
 		case uri := <-s.resourcesSubscribeChan:
 			_, ok := s.subscribedResources.Load(uri)
 			if !ok {
 				continue
 			}
-			_ = writeResult(s.ctx, s.writter, methodNotificationsResourcesSubscribe, uri)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsResourcesUpdated, notificationsResourcesUpdatedParams{
+				URI: uri,
+			})
 		case <-s.toolsListChan:
-			_ = writeResult(s.ctx, s.writter, methodNotificationsToolsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsToolsListChanged, nil)
 		case params := <-s.logChan:
-			_ = writeResult(s.ctx, s.writter, methodNotificationsMessage, params)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsMessage, params)
 		case params := <-s.progressChan:
-			_ = writeResult(s.ctx, s.writter, methodNotificationsProgress, params)
+			_ = writeNotifications(s.ctx, s.writter, methodNotificationsProgress, params)
+		}
+	}
+}
+
+func (s *serverSession) pings() {
+	pingTicker := time.NewTicker(s.pingInterval)
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
 		case <-pingTicker.C:
 			if err := s.ping(); err != nil {
 				log.Print(err)
@@ -173,7 +184,7 @@ func (s *serverSession) handleInitialize(
 
 func (s *serverSession) handlePromptsList(
 	msgID MustString,
-	params promptsListParams,
+	params PromptsListParams,
 	server PromptServer,
 ) error {
 	if !s.isInitialized() {
@@ -188,7 +199,7 @@ func (s *serverSession) handlePromptsList(
 		cancel: cancel,
 	})
 
-	ps, err := server.ListPrompts(ctx, params.Cursor, params.Meta.ProgressToken)
+	ps, err := server.ListPrompts(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -201,7 +212,7 @@ func (s *serverSession) handlePromptsList(
 
 func (s *serverSession) handlePromptsGet(
 	msgID MustString,
-	params promptsGetParams,
+	params PromptsGetParams,
 	server PromptServer,
 ) error {
 	if !s.isInitialized() {
@@ -217,7 +228,7 @@ func (s *serverSession) handlePromptsGet(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	p, err := server.GetPrompt(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
+	p, err := server.GetPrompt(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -230,8 +241,7 @@ func (s *serverSession) handlePromptsGet(
 
 func (s *serverSession) handleCompletePrompt(
 	msgID MustString,
-	name string,
-	argument CompletionArgument,
+	params CompletionCompleteParams,
 	server PromptServer,
 ) error {
 	if !s.isInitialized() {
@@ -247,7 +257,7 @@ func (s *serverSession) handleCompletePrompt(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	result, err := server.CompletesPrompt(ctx, name, argument)
+	result, err := server.CompletesPrompt(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -260,7 +270,7 @@ func (s *serverSession) handleCompletePrompt(
 
 func (s *serverSession) handleResourcesList(
 	msgID MustString,
-	params resourcesListParams,
+	params ResourcesListParams,
 	server ResourceServer,
 ) error {
 	if !s.isInitialized() {
@@ -276,7 +286,7 @@ func (s *serverSession) handleResourcesList(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	rs, err := server.ListResources(ctx, params.Cursor, params.Meta.ProgressToken)
+	rs, err := server.ListResources(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -289,7 +299,7 @@ func (s *serverSession) handleResourcesList(
 
 func (s *serverSession) handleResourcesRead(
 	msgID MustString,
-	params resourcesReadParams,
+	params ResourcesReadParams,
 	server ResourceServer,
 ) error {
 	if !s.isInitialized() {
@@ -305,7 +315,7 @@ func (s *serverSession) handleResourcesRead(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	r, err := server.ReadResource(ctx, params.URI, params.Meta.ProgressToken)
+	r, err := server.ReadResource(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -318,7 +328,7 @@ func (s *serverSession) handleResourcesRead(
 
 func (s *serverSession) handleResourcesListTemplates(
 	msgID MustString,
-	params resourcesTemplatesListParams,
+	params ResourcesTemplatesListParams,
 	server ResourceServer,
 ) error {
 	if !s.isInitialized() {
@@ -334,7 +344,7 @@ func (s *serverSession) handleResourcesListTemplates(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	ts, err := server.ListResourceTemplates(ctx, params.Meta.ProgressToken)
+	ts, err := server.ListResourceTemplates(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -347,7 +357,7 @@ func (s *serverSession) handleResourcesListTemplates(
 
 func (s *serverSession) handleResourcesSubscribe(
 	msgID MustString,
-	params resourcesSubscribeParams,
+	params ResourcesSubscribeParams,
 	server ResourceServer,
 ) error {
 	if !s.isInitialized() {
@@ -362,7 +372,7 @@ func (s *serverSession) handleResourcesSubscribe(
 		cancel: cancel,
 	})
 
-	server.SubscribeResource(params.URI)
+	server.SubscribeResource(params)
 	s.subscribedResources.Store(params.URI, struct{}{})
 
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
@@ -373,8 +383,7 @@ func (s *serverSession) handleResourcesSubscribe(
 
 func (s *serverSession) handleCompleteResource(
 	msgID MustString,
-	name string,
-	argument CompletionArgument,
+	params CompletionCompleteParams,
 	server ResourceServer,
 ) error {
 	if !s.isInitialized() {
@@ -390,7 +399,7 @@ func (s *serverSession) handleCompleteResource(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	result, err := server.CompletesResourceTemplate(ctx, name, argument)
+	result, err := server.CompletesResourceTemplate(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -403,7 +412,7 @@ func (s *serverSession) handleCompleteResource(
 
 func (s *serverSession) handleToolsList(
 	msgID MustString,
-	params toolsListParams,
+	params ToolsListParams,
 	server ToolServer,
 ) error {
 	if !s.isInitialized() {
@@ -419,7 +428,7 @@ func (s *serverSession) handleToolsList(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	ts, err := server.ListTools(ctx, params.Cursor, params.Meta.ProgressToken)
+	ts, err := server.ListTools(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -432,7 +441,7 @@ func (s *serverSession) handleToolsList(
 
 func (s *serverSession) handleToolsCall(
 	msgID MustString,
-	params toolsCallParams,
+	params ToolsCallParams,
 	server ToolServer,
 ) error {
 	if !s.isInitialized() {
@@ -448,7 +457,7 @@ func (s *serverSession) handleToolsCall(
 	})
 
 	ctx = ctxWithSessionID(ctx, s.id)
-	result, err := server.CallTool(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
+	result, err := server.CallTool(ctx, params)
 	if err != nil {
 		return s.sendError(ctx, jsonRPCInternalErrorCode, errMsgInternalError, msgID, err)
 	}
@@ -477,13 +486,13 @@ func (s *serverSession) handleNotificationsCancelled(params notificationsCancell
 	req.cancel()
 }
 
-func (s *serverSession) handleResult(msg jsonRPCMessage) error {
+func (s *serverSession) handleResult(msg JSONRPCMessage) error {
 	reqID := string(msg.ID)
 	rc, ok := s.serverRequests.Load(reqID)
 	if !ok {
 		return nil
 	}
-	resChan, _ := rc.(chan jsonRPCMessage)
+	resChan, _ := rc.(chan JSONRPCMessage)
 	resChan <- msg
 	return nil
 }
@@ -495,9 +504,9 @@ func (s *serverSession) isInitialized() bool {
 	return s.initialized
 }
 
-func (s *serverSession) registerRequest() (string, chan jsonRPCMessage) {
+func (s *serverSession) registerRequest() (string, chan JSONRPCMessage) {
 	reqID := uuid.New().String()
-	resChan := make(chan jsonRPCMessage)
+	resChan := make(chan JSONRPCMessage)
 	s.serverRequests.Store(reqID, resChan)
 	return reqID, resChan
 }
@@ -508,13 +517,13 @@ func (s *serverSession) listRoots() (RootList, error) {
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writter, MustString(reqID), methodRootsList, nil); err != nil {
+	if err := writeParams(wCtx, s.writter, MustString(reqID), MethodRootsList, nil); err != nil {
 		return RootList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(s.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -540,13 +549,13 @@ func (s *serverSession) createSampleMessage(params SamplingParams) (SamplingResu
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writter, MustString(reqID), methodSamplingCreateMessage, params); err != nil {
+	if err := writeParams(wCtx, s.writter, MustString(reqID), MethodSamplingCreateMessage, params); err != nil {
 		return SamplingResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(s.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -578,7 +587,7 @@ func (s *serverSession) ping() error {
 
 	ticker := time.NewTicker(s.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -604,15 +613,24 @@ func (s *serverSession) sendError(ctx context.Context, code int, message string,
 }
 
 func (c *clientSession) listen() {
-	pingTicker := time.NewTicker(c.pingInterval)
-
 	for {
 		select {
 		case <-c.ctx.Done():
 			c.stopChan <- c.id
 			return
 		case <-c.rootsListChan:
-			_ = writeResult(c.ctx, c.writter, methodNotificationsRootsListChanged, nil)
+			_ = writeNotifications(c.ctx, c.writter, methodNotificationsRootsListChanged, nil)
+		}
+	}
+}
+
+func (c *clientSession) pings() {
+	pingTicker := time.NewTicker(c.pingInterval)
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
 		case <-pingTicker.C:
 			if err := c.ping(); err != nil {
 				log.Print(err)
@@ -685,20 +703,20 @@ func (c *clientSession) handleNotificationsCancelled(params notificationsCancell
 	req.cancel()
 }
 
-func (c *clientSession) handleResult(msg jsonRPCMessage) error {
+func (c *clientSession) handleResult(msg JSONRPCMessage) error {
 	reqID := string(msg.ID)
 	rc, ok := c.clientRequests.Load(reqID)
 	if !ok {
 		return nil
 	}
-	resChan, _ := rc.(chan jsonRPCMessage)
+	resChan, _ := rc.(chan JSONRPCMessage)
 	resChan <- msg
 	return nil
 }
 
-func (c *clientSession) registerRequest() (string, chan jsonRPCMessage) {
+func (c *clientSession) registerRequest() (string, chan JSONRPCMessage) {
 	reqID := uuid.New().String()
-	resChan := make(chan jsonRPCMessage)
+	resChan := make(chan JSONRPCMessage)
 	c.clientRequests.Store(reqID, resChan)
 	return reqID, resChan
 }
@@ -723,7 +741,7 @@ func (c *clientSession) initialize(
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -750,7 +768,7 @@ func (c *clientSession) initialize(
 		return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgUnsupportedProtocolVersion, msg.ID, nErr)
 	}
 
-	if err := c.checkCapabilities(ctx, msg.ID, result, requiredServerCap); err != nil {
+	if err := c.checkCapabilities(result, requiredServerCap); err != nil {
 		return err
 	}
 
@@ -758,7 +776,7 @@ func (c *clientSession) initialize(
 	defer c.initLock.Unlock()
 	c.initialized = true
 
-	return nil
+	return writeNotifications(ctx, c.writter, methodNotificationsInitialized, nil)
 }
 
 func (c *clientSession) listPrompts(cursor string, progressToken MustString) (PromptList, error) {
@@ -767,22 +785,31 @@ func (c *clientSession) listPrompts(cursor string, progressToken MustString) (Pr
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodPromptsList, promptsListParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodPromptsList, PromptsListParams{
 		Cursor: cursor,
-		Meta:   paramsMeta{ProgressToken: progressToken},
+		Meta:   ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return PromptList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
 		return PromptList{}, fmt.Errorf("list prompts timeout")
 	case <-wCtx.Done():
-		return PromptList{}, wCtx.Err()
+		err := wCtx.Err()
+		if !errors.Is(err, context.Canceled) {
+			return PromptList{}, err
+		}
+		cCtx, cCancel := context.WithTimeout(c.ctx, c.writeTimeout)
+		defer cCancel()
+		return PromptList{}, writeNotifications(cCtx, c.writter, methodNotificationsCancelled, notificationsCancelledParams{
+			RequestID: reqID,
+			Reason:    userCancelledReason,
+		})
 	case msg = <-resChan:
 	}
 
@@ -802,17 +829,17 @@ func (c *clientSession) getPrompt(name string, arguments map[string]any, progres
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodPromptsGet, promptsGetParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodPromptsGet, PromptsGetParams{
 		Name:      name,
 		Arguments: arguments,
-		Meta:      paramsMeta{ProgressToken: progressToken},
+		Meta:      ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return Prompt{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -838,9 +865,9 @@ func (c *clientSession) completesPrompt(name string, arg CompletionArgument) (Co
 	wCtx, wCancel := context.WithCancel(c.ctx)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodCompletionComplete, completionCompleteParams{
-		Ref: completionCompleteRef{
-			Type: "ref/prompt",
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodCompletionComplete, CompletionCompleteParams{
+		Ref: CompletionCompleteRef{
+			Type: CompletionRefPrompt,
 			Name: name,
 		},
 		Argument: arg,
@@ -851,7 +878,7 @@ func (c *clientSession) completesPrompt(name string, arg CompletionArgument) (Co
 	ticker := time.NewTicker(c.readTimeout)
 	defer ticker.Stop()
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -877,16 +904,16 @@ func (c *clientSession) listResources(cursor string, progressToken MustString) (
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodResourcesList, resourcesListParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesList, ResourcesListParams{
 		Cursor: cursor,
-		Meta:   paramsMeta{ProgressToken: progressToken},
+		Meta:   ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return ResourceList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -912,16 +939,16 @@ func (c *clientSession) readResource(uri string, progressToken MustString) (Reso
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodResourcesRead, resourcesReadParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesRead, ResourcesReadParams{
 		URI:  uri,
-		Meta: paramsMeta{ProgressToken: progressToken},
+		Meta: ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return Resource{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -947,15 +974,15 @@ func (c *clientSession) listResourceTemplates(progressToken MustString) ([]Resou
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodResourcesTemplatesList, resourcesTemplatesListParams{
-		Meta: paramsMeta{ProgressToken: progressToken},
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesTemplatesList, ResourcesTemplatesListParams{
+		Meta: ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return nil, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -981,9 +1008,9 @@ func (c *clientSession) completesResourceTemplate(uri string, arg CompletionArgu
 	wCtx, wCancel := context.WithCancel(c.ctx)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodCompletionComplete, completionCompleteParams{
-		Ref: completionCompleteRef{
-			Type: "ref/resource",
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodCompletionComplete, CompletionCompleteParams{
+		Ref: CompletionCompleteRef{
+			Type: CompletionRefResource,
 			URI:  uri,
 		},
 		Argument: arg,
@@ -994,7 +1021,7 @@ func (c *clientSession) completesResourceTemplate(uri string, arg CompletionArgu
 	ticker := time.NewTicker(c.readTimeout)
 	defer ticker.Stop()
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -1020,7 +1047,7 @@ func (c *clientSession) subscribeResource(uri string) error {
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodResourcesSubscribe, resourcesSubscribeParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesSubscribe, ResourcesSubscribeParams{
 		URI: uri,
 	}); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
@@ -1028,7 +1055,7 @@ func (c *clientSession) subscribeResource(uri string) error {
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -1051,16 +1078,16 @@ func (c *clientSession) listTools(cursor string, progressToken MustString) (Tool
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodToolsList, toolsListParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodToolsList, ToolsListParams{
 		Cursor: cursor,
-		Meta:   paramsMeta{ProgressToken: progressToken},
+		Meta:   ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return ToolList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -1086,17 +1113,17 @@ func (c *clientSession) callTool(name string, arguments map[string]any, progress
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodToolsCall, toolsCallParams{
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodToolsCall, ToolsCallParams{
 		Name:      name,
 		Arguments: arguments,
-		Meta:      paramsMeta{ProgressToken: progressToken},
+		Meta:      ParamsMeta{ProgressToken: progressToken},
 	}); err != nil {
 		return ToolResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -1128,7 +1155,7 @@ func (c *clientSession) ping() error {
 
 	ticker := time.NewTicker(c.readTimeout)
 
-	var msg jsonRPCMessage
+	var msg JSONRPCMessage
 
 	select {
 	case <-ticker.C:
@@ -1145,23 +1172,18 @@ func (c *clientSession) ping() error {
 	return nil
 }
 
-func (c *clientSession) checkCapabilities(
-	ctx context.Context,
-	msgID MustString,
-	result initializeResult,
-	requiredServerCap ServerCapabilities,
-) error {
+func (c *clientSession) checkCapabilities(result initializeResult, requiredServerCap ServerCapabilities) error {
 	if requiredServerCap.Prompts != nil {
 		if result.Capabilities.Prompts == nil {
 			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'prompts'")
 			log.Print(nErr)
-			return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+			return nErr
 		}
 		if requiredServerCap.Prompts.ListChanged {
 			if !result.Capabilities.Prompts.ListChanged {
 				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'prompts.listChanged'")
 				log.Print(nErr)
-				return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+				return nErr
 			}
 		}
 	}
@@ -1170,20 +1192,20 @@ func (c *clientSession) checkCapabilities(
 		if result.Capabilities.Resources == nil {
 			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources'")
 			log.Print(nErr)
-			return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+			return nErr
 		}
 		if requiredServerCap.Resources.ListChanged {
 			if !result.Capabilities.Resources.ListChanged {
 				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources.listChanged'")
 				log.Print(nErr)
-				return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+				return nErr
 			}
 		}
 		if requiredServerCap.Resources.Subscribe {
 			if !result.Capabilities.Resources.Subscribe {
 				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources.subscribe'")
 				log.Print(nErr)
-				return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+				return nErr
 			}
 		}
 	}
@@ -1192,13 +1214,13 @@ func (c *clientSession) checkCapabilities(
 		if result.Capabilities.Tools == nil {
 			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'tools'")
 			log.Print(nErr)
-			return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+			return nErr
 		}
 		if requiredServerCap.Tools.ListChanged {
 			if !result.Capabilities.Tools.ListChanged {
 				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'tools.listChanged'")
 				log.Print(nErr)
-				return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+				return nErr
 			}
 		}
 	}
@@ -1206,7 +1228,7 @@ func (c *clientSession) checkCapabilities(
 	if requiredServerCap.Logging != nil {
 		nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'logging'")
 		log.Print(nErr)
-		return c.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientServerCapabilities, msgID, nErr)
+		return nErr
 	}
 
 	return nil
