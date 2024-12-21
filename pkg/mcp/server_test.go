@@ -78,7 +78,7 @@ func TestServerHandleMsg(t *testing.T) {
 	sess := &serverSession{
 		id:           "test-session",
 		ctx:          context.Background(),
-		writter:      writer,
+		writer:       writer,
 		writeTimeout: time.Second,
 	}
 

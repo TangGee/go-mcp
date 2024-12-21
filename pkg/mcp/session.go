@@ -14,10 +14,10 @@ import (
 )
 
 type serverSession struct {
-	id      string
-	ctx     context.Context
-	cancel  context.CancelFunc
-	writter io.Writer
+	id     string
+	ctx    context.Context
+	cancel context.CancelFunc
+	writer io.Writer
 
 	writeTimeout time.Duration
 	readTimeout  time.Duration
@@ -93,23 +93,23 @@ func (s *serverSession) listen() {
 			s.stopChan <- s.id
 			return
 		case <-s.promptsListChan:
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsPromptsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsPromptsListChanged, nil)
 		case <-s.resourcesListChan:
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsResourcesListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsResourcesListChanged, nil)
 		case uri := <-s.resourcesSubscribeChan:
 			_, ok := s.subscribedResources.Load(uri)
 			if !ok {
 				continue
 			}
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsResourcesUpdated, notificationsResourcesUpdatedParams{
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsResourcesUpdated, notificationsResourcesUpdatedParams{
 				URI: uri,
 			})
 		case <-s.toolsListChan:
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsToolsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsToolsListChanged, nil)
 		case params := <-s.logChan:
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsMessage, params)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsMessage, params)
 		case params := <-s.progressChan:
-			_ = writeNotifications(s.ctx, s.writter, methodNotificationsProgress, params)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsProgress, params)
 		}
 	}
 }
@@ -133,7 +133,7 @@ func (s *serverSession) handlePing(msgID MustString) error {
 	ctx, cancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer cancel()
 
-	return writeResult(ctx, s.writter, msgID, nil)
+	return writeResult(ctx, s.writer, msgID, nil)
 }
 
 func (s *serverSession) handleInitialize(
@@ -175,7 +175,7 @@ func (s *serverSession) handleInitialize(
 		}
 	}
 
-	return writeResult(ctx, s.writter, msgID, initializeResult{
+	return writeResult(ctx, s.writer, msgID, initializeResult{
 		ProtocolVersion: protocolVersion,
 		Capabilities:    serverCap,
 		ServerInfo:      serverInfo,
@@ -207,7 +207,7 @@ func (s *serverSession) handlePromptsList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, ps)
+	return writeResult(wCtx, s.writer, msgID, ps)
 }
 
 func (s *serverSession) handlePromptsGet(
@@ -236,7 +236,7 @@ func (s *serverSession) handlePromptsGet(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, p)
+	return writeResult(wCtx, s.writer, msgID, p)
 }
 
 func (s *serverSession) handleCompletePrompt(
@@ -265,7 +265,7 @@ func (s *serverSession) handleCompletePrompt(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, result)
+	return writeResult(wCtx, s.writer, msgID, result)
 }
 
 func (s *serverSession) handleResourcesList(
@@ -294,7 +294,7 @@ func (s *serverSession) handleResourcesList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, rs)
+	return writeResult(wCtx, s.writer, msgID, rs)
 }
 
 func (s *serverSession) handleResourcesRead(
@@ -323,7 +323,7 @@ func (s *serverSession) handleResourcesRead(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, r)
+	return writeResult(wCtx, s.writer, msgID, r)
 }
 
 func (s *serverSession) handleResourcesListTemplates(
@@ -352,7 +352,7 @@ func (s *serverSession) handleResourcesListTemplates(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, ts)
+	return writeResult(wCtx, s.writer, msgID, ts)
 }
 
 func (s *serverSession) handleResourcesSubscribe(
@@ -378,7 +378,7 @@ func (s *serverSession) handleResourcesSubscribe(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, nil)
+	return writeResult(wCtx, s.writer, msgID, nil)
 }
 
 func (s *serverSession) handleCompleteResource(
@@ -407,7 +407,7 @@ func (s *serverSession) handleCompleteResource(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, result)
+	return writeResult(wCtx, s.writer, msgID, result)
 }
 
 func (s *serverSession) handleToolsList(
@@ -436,7 +436,7 @@ func (s *serverSession) handleToolsList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, ts)
+	return writeResult(wCtx, s.writer, msgID, ts)
 }
 
 func (s *serverSession) handleToolsCall(
@@ -465,7 +465,7 @@ func (s *serverSession) handleToolsCall(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writter, msgID, result)
+	return writeResult(wCtx, s.writer, msgID, result)
 }
 
 func (s *serverSession) handleNotificationsInitialized() {
@@ -517,7 +517,7 @@ func (s *serverSession) listRoots() (RootList, error) {
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writter, MustString(reqID), MethodRootsList, nil); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodRootsList, nil); err != nil {
 		return RootList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -549,7 +549,7 @@ func (s *serverSession) createSampleMessage(params SamplingParams) (SamplingResu
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writter, MustString(reqID), MethodSamplingCreateMessage, params); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodSamplingCreateMessage, params); err != nil {
 		return SamplingResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -581,7 +581,7 @@ func (s *serverSession) ping() error {
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writter, MustString(reqID), methodPing, nil); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), methodPing, nil); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -605,7 +605,7 @@ func (s *serverSession) ping() error {
 }
 
 func (s *serverSession) sendError(ctx context.Context, code int, message string, msgID MustString, err error) error {
-	return writeError(ctx, s.writter, msgID, jsonRPCError{
+	return writeError(ctx, s.writer, msgID, jsonRPCError{
 		Code:    code,
 		Message: message,
 		Data:    map[string]any{"error": err},

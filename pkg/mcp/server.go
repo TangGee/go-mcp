@@ -367,7 +367,7 @@ func (s server) startSession(ctx context.Context, w io.Writer) string {
 		id:                     sessID,
 		ctx:                    sCtx,
 		cancel:                 sCancel,
-		writter:                w,
+		writer:                 w,
 		writeTimeout:           s.writeTimeout,
 		readTimeout:            s.readTimeout,
 		pingInterval:           s.pingInterval,
