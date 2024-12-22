@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/qri-io/jsonschema"
 )
 
 type mockClient struct{}
@@ -935,22 +937,22 @@ func TestClientListTools(t *testing.T) {
 				{
 					Name:        "test-tool-1",
 					Description: "First test tool",
-					InputSchema: map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"param1": map[string]any{"type": "string"},
-						},
-					},
+					InputSchema: jsonschema.Must(`{
+            "type": "object",
+            "properties": {
+              "param1": { "type": "string" }
+            }
+          }`),
 				},
 				{
 					Name:        "test-tool-2",
 					Description: "Second test tool",
-					InputSchema: map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"param2": map[string]any{"type": "number"},
-						},
-					},
+					InputSchema: jsonschema.Must(`{
+            "type": "object",
+            "properties": {
+              "param2": { "type": "number" }
+            }
+          }`),
 				},
 			},
 			NextCursor: "next-cursor",

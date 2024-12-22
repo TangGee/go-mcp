@@ -551,9 +551,9 @@ func (m *mockResourceServer) CompletesResourceTemplate(
 	return CompletionResult{}, nil
 }
 
-func (m *mockToolServer) ListTools(_ context.Context, params ToolsListParams) (*ToolList, error) {
+func (m *mockToolServer) ListTools(_ context.Context, params ToolsListParams) (ToolList, error) {
 	m.listToolsCalled = true
-	return &ToolList{
+	return ToolList{
 		Tools: []Tool{
 			{Name: "test-tool", Description: "Test Tool"},
 		},

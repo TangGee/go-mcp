@@ -1,6 +1,10 @@
 package mcp
 
-import "context"
+import (
+	"context"
+
+	"github.com/qri-io/jsonschema"
+)
 
 // Server interfaces
 
@@ -100,7 +104,7 @@ type ResourceSubscribedUpdater interface {
 type ToolServer interface {
 	// ListTools returns a paginated list of available tools.
 	// Returns error if operation fails or context is cancelled.
-	ListTools(ctx context.Context, params ToolsListParams) (*ToolList, error)
+	ListTools(ctx context.Context, params ToolsListParams) (ToolList, error)
 
 	// CallTool executes a specific tool with the given arguments.
 	// Returns error if tool not found, arguments are invalid, execution fails, or context is cancelled.
@@ -399,9 +403,9 @@ type ToolList struct {
 // Tool defines a callable tool with its input schema.
 // InputSchema defines the expected format of arguments for CallTool.
 type Tool struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	InputSchema map[string]any `json:"inputSchema,omitempty"`
+	Name        string             `json:"name"`
+	Description string             `json:"description,omitempty"`
+	InputSchema *jsonschema.Schema `json:"inputSchema,omitempty"`
 }
 
 // ToolResult represents the outcome of a tool invocation via CallTool.

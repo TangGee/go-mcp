@@ -94,11 +94,24 @@ func waitStdIOInput(ctx context.Context, in io.Reader) (JSONRPCMessage, error) {
 	return res, nil
 }
 
-// Run starts the StdIOClient's main processing loop. It handles incoming JSON-RPC messages
-// from the provided reader, processes them according to the protocol, and writes responses
-// to the provided writer. Errors during processing are sent to errsChan. The loop continues
-// until the context is cancelled or a fatal error occurs.
-func (s *StdIOClient) Run(ctx context.Context, in io.Reader, out io.Writer, errsChan chan<- error) error {
+// Run starts the StdIOClient's main processing loop and manages the client-server communication.
+// It initializes a session, processes incoming JSON-RPC messages, and handles various MCP operations.
+//
+// The provided context controls cancellation and timeout. The method reads JSON-RPC messages
+// from the supplied io.Reader and writes responses to the io.Writer. When initialization is
+// complete, a signal is sent on readyChan. During operation, any non-fatal errors encountered
+// during message processing are sent to errsChan.
+//
+// The method continues running until either the context is cancelled or a fatal error occurs.
+// Non-fatal errors such as invalid JSON are reported through errsChan, while fatal errors
+// are returned directly. The errsChan is closed when Run exits.
+func (s *StdIOClient) Run(
+	ctx context.Context,
+	in io.Reader,
+	out io.Writer,
+	readyChan chan<- struct{},
+	errsChan chan<- error,
+) error {
 	s.srv.srv.start()
 	defer func() {
 		s.srv.srv.stop()
@@ -106,6 +119,16 @@ func (s *StdIOClient) Run(ctx context.Context, in io.Reader, out io.Writer, errs
 	}()
 
 	go s.listenWritter(ctx)
+
+	s.currentSessionID = s.srv.srv.startSession(ctx, s.writter)
+	s.cli.startSession(ctx, s.writter, s.currentSessionID)
+
+	sessCtx := ctxWithSessionID(ctx, s.currentSessionID)
+	if err := s.cli.initialize(sessCtx); err != nil {
+		return fmt.Errorf("failed to initialize session: %w", err)
+	}
+
+	readyChan <- struct{}{}
 
 	for {
 		input, err := waitStdIOInput(ctx, in)
@@ -117,57 +140,36 @@ func (s *StdIOClient) Run(ctx context.Context, in io.Reader, out io.Writer, errs
 			return err
 		}
 
-		s.currentSessionID = s.srv.srv.startSession(ctx, s.writter)
-		s.cli.startSession(ctx, s.writter, s.currentSessionID)
-
-		sessCtx := ctxWithSessionID(ctx, s.currentSessionID)
-		if err := s.cli.initialize(sessCtx); err != nil {
-			errsChan <- fmt.Errorf("failed to initialize session: %w", err)
+		switch input.Method {
+		case MethodPromptsList:
+			err = s.handlePromptsList(sessCtx, input, out)
+		case MethodPromptsGet:
+			err = s.handlePromptsGet(sessCtx, input, out)
+		case MethodResourcesList:
+			err = s.handleResourcesList(sessCtx, input, out)
+		case MethodResourcesRead:
+			err = s.handleResourcesRead(sessCtx, input, out)
+		case MethodResourcesTemplatesList:
+			err = s.handleResourcesTemplatesList(sessCtx, input, out)
+		case MethodResourcesSubscribe:
+			err = s.handleResourcesSubscribe(sessCtx, input, out)
+		case MethodToolsList:
+			err = s.handleToolsList(sessCtx, input, out)
+		case MethodToolsCall:
+			err = s.handleToolsCall(sessCtx, input, out)
+		default:
 			continue
 		}
 
-		switch input.Method {
-		case MethodPromptsList:
-			if err := s.handlePromptsList(sessCtx, input, out); err != nil {
+		if err != nil {
+			var jsonErr *jsonRPCError
+			if !errors.As(err, &jsonErr) {
 				errsChan <- err
 				continue
 			}
-		case MethodPromptsGet:
-			if err := s.handlePromptsGet(sessCtx, input, out); err != nil {
+			if err := writeError(sessCtx, out, input.ID, *jsonErr); err != nil {
 				errsChan <- err
-				continue
 			}
-		case MethodResourcesList:
-			if err := s.handleResourcesList(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		case MethodResourcesRead:
-			if err := s.handleResourcesRead(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		case MethodResourcesTemplatesList:
-			if err := s.handleResourcesTemplatesList(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		case MethodResourcesSubscribe:
-			if err := s.handleResourcesSubscribe(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		case MethodToolsList:
-			if err := s.handleToolsList(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		case MethodToolsCall:
-			if err := s.handleToolsCall(sessCtx, input, out); err != nil {
-				errsChan <- err
-				continue
-			}
-		default:
 			continue
 		}
 	}

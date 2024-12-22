@@ -608,7 +608,7 @@ func (s *serverSession) sendError(ctx context.Context, code int, message string,
 	return writeError(ctx, s.writer, msgID, jsonRPCError{
 		Code:    code,
 		Message: message,
-		Data:    map[string]any{"error": err},
+		Data:    map[string]any{"error": err.Error()},
 	})
 }
 

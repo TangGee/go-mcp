@@ -31,9 +31,10 @@ func main() {
 		cancel()
 	}()
 
+	readyChan := make(chan struct{})
 	errsChan := make(chan error)
 	go func() {
-		err := cli.Run(ctx, c, c, errsChan)
+		err := cli.Run(ctx, c, c, readyChan, errsChan)
 		if err != nil {
 			log.Print(err)
 		}

@@ -69,6 +69,7 @@ func TestStdIOClient(t *testing.T) {
 	// Create test context and channels
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	readyChan := make(chan struct{})
 	errsChan := make(chan error)
 
 	// Create test input/output
@@ -88,8 +89,10 @@ func TestStdIOClient(t *testing.T) {
 
 	// Run client in goroutine
 	go func() {
-		_ = cli.Run(ctx, inReader, outWriter, errsChan)
+		_ = cli.Run(ctx, inReader, outWriter, readyChan, errsChan)
 	}()
+
+	<-readyChan
 
 	// Wait for response or timeout
 	select {
