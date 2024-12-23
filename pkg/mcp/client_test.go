@@ -183,11 +183,16 @@ func TestClientGetPrompt(t *testing.T) {
 		}
 
 		// Send mock response
-		mockResponse := Prompt{
-			Name:        "test-prompt",
+		mockResponse := PromptResult{
 			Description: "Test Prompt",
-			Arguments: []PromptArgument{
-				{Name: "test-arg", Description: "Test Argument", Required: true},
+			Messages: []PromptMessage{
+				{
+					Role: PromptRoleAssistant,
+					Content: Content{
+						Type: ContentTypeText,
+						Text: "Test response message",
+					},
+				},
 			},
 		}
 		mockBs, err := json.Marshal(mockResponse)
@@ -210,7 +215,7 @@ func TestClientGetPrompt(t *testing.T) {
 
 	// Call getPrompt
 	ctx = ctxWithSessionID(ctx, sessID)
-	result, err := c.getPrompt(ctx, "test-prompt", map[string]any{
+	result, err := c.getPrompt(ctx, "test-prompt", map[string]string{
 		"test-arg": "test-value",
 	}, "123")
 	if err != nil {
@@ -218,20 +223,20 @@ func TestClientGetPrompt(t *testing.T) {
 	}
 
 	// Verify result
-	if result.Name != "test-prompt" {
-		t.Errorf("expected prompt name test-prompt, got %s", result.Name)
-	}
 	if result.Description != "Test Prompt" {
 		t.Errorf("expected description 'Test Prompt', got %s", result.Description)
 	}
-	if len(result.Arguments) != 1 {
-		t.Errorf("expected 1 argument, got %d", len(result.Arguments))
+	if len(result.Messages) != 1 {
+		t.Errorf("expected 1 message, got %d", len(result.Messages))
 	}
-	if result.Arguments[0].Name != "test-arg" {
-		t.Errorf("expected argument name test-arg, got %s", result.Arguments[0].Name)
+	if result.Messages[0].Role != PromptRoleAssistant {
+		t.Errorf("expected message role %s, got %s", PromptRoleAssistant, result.Messages[0].Role)
 	}
-	if !result.Arguments[0].Required {
-		t.Error("expected argument to be required")
+	if result.Messages[0].Content.Type != ContentTypeText {
+		t.Errorf("expected content type %s, got %s", ContentTypeText, result.Messages[0].Content.Type)
+	}
+	if result.Messages[0].Content.Text != "Test response message" {
+		t.Errorf("expected message text 'Test response message', got %s", result.Messages[0].Content.Text)
 	}
 }
 

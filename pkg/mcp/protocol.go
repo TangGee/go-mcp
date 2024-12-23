@@ -135,6 +135,8 @@ const (
 	MethodResourcesTemplatesList = "resources/templates/list"
 	// MethodResourcesSubscribe is the method name for subscribing to resource updates.
 	MethodResourcesSubscribe = "resources/subscribe"
+	// MethodResourcesUnsubscribe is the method name for unsubscribing from resource updates.
+	MethodResourcesUnsubscribe = "resources/unsubscribe"
 
 	// MethodToolsList is the method name for retrieving a list of available tools.
 	MethodToolsList = "tools/list"
@@ -148,6 +150,9 @@ const (
 
 	// MethodCompletionComplete is the method name for requesting completion suggestions.
 	MethodCompletionComplete = "completion/complete"
+
+	// MethodLoggingSetLevel is the method name for setting the minimum severity level for emitted log messages.
+	MethodLoggingSetLevel = "logging/setLevel"
 
 	protocolVersion = "2024-11-05"
 
@@ -196,17 +201,17 @@ func readMessage(r io.Reader) (JSONRPCMessage, error) {
 	return msg, nil
 }
 
-func writeError(ctx context.Context, w io.Writer, id MustString, err jsonRPCError) error {
+func writeError(ctx context.Context, w io.Writer, id MustString, err jsonRPCError, fmFunc func([]byte) []byte) error {
 	response := JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		ID:      id,
 		Error:   &err,
 	}
 
-	return writeMessage(ctx, w, response)
+	return writeMessage(ctx, w, response, fmFunc)
 }
 
-func writeResult(ctx context.Context, w io.Writer, id MustString, result any) error {
+func writeResult(ctx context.Context, w io.Writer, id MustString, result any, fmFunc func([]byte) []byte) error {
 	resBs, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("failed to marshal result: %w", err)
@@ -218,10 +223,17 @@ func writeResult(ctx context.Context, w io.Writer, id MustString, result any) er
 		Result:  resBs,
 	}
 
-	return writeMessage(ctx, w, msg)
+	return writeMessage(ctx, w, msg, fmFunc)
 }
 
-func writeParams(ctx context.Context, w io.Writer, id MustString, method string, params any) error {
+func writeParams(
+	ctx context.Context,
+	w io.Writer,
+	id MustString,
+	method string,
+	params any,
+	fmFunc func([]byte) []byte,
+) error {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -234,10 +246,10 @@ func writeParams(ctx context.Context, w io.Writer, id MustString, method string,
 		Params:  paramsBs,
 	}
 
-	return writeMessage(ctx, w, msg)
+	return writeMessage(ctx, w, msg, fmFunc)
 }
 
-func writeNotifications(ctx context.Context, w io.Writer, method string, params any) error {
+func writeNotifications(ctx context.Context, w io.Writer, method string, params any, fmFunc func([]byte) []byte) error {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -249,16 +261,19 @@ func writeNotifications(ctx context.Context, w io.Writer, method string, params 
 		Params:  paramsBs,
 	}
 
-	return writeMessage(ctx, w, msg)
+	return writeMessage(ctx, w, msg, fmFunc)
 }
 
-func writeMessage(ctx context.Context, w io.Writer, msg JSONRPCMessage) error {
-	encoder := json.NewEncoder(w)
+func writeMessage(ctx context.Context, w io.Writer, msg JSONRPCMessage, formatMsgFunc func([]byte) []byte) error {
+	msgBs, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+	msgBs = formatMsgFunc(msgBs)
 	errChan := make(chan error)
 
 	go func() {
-		err := encoder.Encode(&msg)
-		if err != nil {
+		if _, err := w.Write(msgBs); err != nil {
 			errChan <- fmt.Errorf("failed to write message: %w", err)
 			return
 		}

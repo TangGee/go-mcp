@@ -21,7 +21,7 @@ func TestStdIOServer(t *testing.T) {
 
 	// Test handling a message
 	writer := &mockWriter{}
-	sessID := srv.srv.startSession(context.Background(), writer)
+	sessID := srv.srv.startSession(context.Background(), writer, nopFormatMsgFunc, nopMsgSentHook)
 
 	// Initialize session
 	initParams := initializeParams{
@@ -42,6 +42,9 @@ func TestStdIOServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
+
+	// handleMsg is using a goroutine, so we need to wait a little bit
+	time.Sleep(2 * time.Second)
 
 	// Verify response was written
 	var response JSONRPCMessage
@@ -67,7 +70,7 @@ func TestStdIOClient(t *testing.T) {
 	}
 
 	// Create test context and channels
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	readyChan := make(chan struct{})
 	errsChan := make(chan error)

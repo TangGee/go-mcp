@@ -76,10 +76,12 @@ func TestServerStart(t *testing.T) {
 func TestServerHandleMsg(t *testing.T) {
 	writer := &mockWriter{}
 	sess := &serverSession{
-		id:           "test-session",
-		ctx:          context.Background(),
-		writer:       writer,
-		writeTimeout: time.Second,
+		id:            "test-session",
+		ctx:           context.Background(),
+		formatMsgFunc: nopFormatMsgFunc,
+		msgSentHook:   nopMsgSentHook,
+		writer:        writer,
+		writeTimeout:  time.Second,
 	}
 
 	srv := &mockServer{}
@@ -93,6 +95,9 @@ func TestServerHandleMsg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handleMsg failed: %v", err)
 	}
+
+	// handleMsg is using a goroutine, so we need to wait a little bit
+	time.Sleep(2 * time.Second)
 
 	var response JSONRPCMessage
 	err = json.NewDecoder(bytes.NewReader(writer.getWritten())).Decode(&response)
@@ -112,7 +117,7 @@ func TestServerStartSession(t *testing.T) {
 	writer := &mockWriter{}
 	ctx := context.Background()
 
-	s.startSession(ctx, writer)
+	s.startSession(ctx, writer, nopFormatMsgFunc, nopMsgSentHook)
 
 	var sessionCount int
 	s.sessions.Range(func(_, _ interface{}) bool {
@@ -134,7 +139,7 @@ func TestServerListRoots(t *testing.T) {
 	s := newServer(srv, WithServerWriteTimeout(time.Second), WithServerReadTimeout(time.Second))
 
 	ctx := context.Background()
-	sessID := s.startSession(ctx, writer)
+	sessID := s.startSession(ctx, writer, nopFormatMsgFunc, nopMsgSentHook)
 
 	// Start goroutine to handle mock response
 	go func() {
@@ -202,13 +207,13 @@ func TestServerListRoots(t *testing.T) {
 	}
 }
 
-func TestServerCreateSampleMessage(t *testing.T) {
+func TestServerRequestSampling(t *testing.T) {
 	writer := &mockWriter{}
 	srv := &mockServer{}
 	s := newServer(srv, WithServerWriteTimeout(time.Second), WithServerReadTimeout(time.Second))
 
 	ctx := context.Background()
-	sessID := s.startSession(ctx, writer)
+	sessID := s.startSession(ctx, writer, nopFormatMsgFunc, nopMsgSentHook)
 
 	// Start goroutine to handle mock response
 	go func() {
@@ -270,7 +275,7 @@ func TestServerCreateSampleMessage(t *testing.T) {
 	// Call createSampleMessage
 	ctx = ctxWithSessionID(ctx, sessID)
 	// Test params
-	result, err := s.createSampleMessage(ctx, SamplingParams{
+	result, err := s.requestSampling(ctx, SamplingParams{
 		Messages: []SamplingMessage{
 			{
 				Role: PromptRoleUser,

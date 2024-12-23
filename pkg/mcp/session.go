@@ -27,6 +27,9 @@ type serverSession struct {
 	serverRequests      sync.Map // map[requestID]chan jsonRPCMessage
 	subscribedResources sync.Map // map[uri]struct{}
 
+	formatMsgFunc func([]byte) []byte // To format message before sending to client
+	msgSentHook   func(string)        // Hook to call after message is sent to client (with session ID as parameter)
+
 	promptsListChan        chan struct{}
 	resourcesListChan      chan struct{}
 	resourcesSubscribeChan chan string
@@ -71,6 +74,11 @@ const sessionIDKey sessionIDKeyType = "sessionID"
 var (
 	errInvalidJSON     = errors.New("invalid json")
 	errSessionNotFound = errors.New("session not found")
+
+	nopFormatMsgFunc = func(bs []byte) []byte {
+		return bs
+	}
+	nopMsgSentHook = func(string) {}
 )
 
 func sessionIDFromContext(ctx context.Context) string {
@@ -93,9 +101,9 @@ func (s *serverSession) listen() {
 			s.stopChan <- s.id
 			return
 		case <-s.promptsListChan:
-			_ = writeNotifications(s.ctx, s.writer, methodNotificationsPromptsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsPromptsListChanged, nil, s.formatMsgFunc)
 		case <-s.resourcesListChan:
-			_ = writeNotifications(s.ctx, s.writer, methodNotificationsResourcesListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsResourcesListChanged, nil, s.formatMsgFunc)
 		case uri := <-s.resourcesSubscribeChan:
 			_, ok := s.subscribedResources.Load(uri)
 			if !ok {
@@ -103,14 +111,15 @@ func (s *serverSession) listen() {
 			}
 			_ = writeNotifications(s.ctx, s.writer, methodNotificationsResourcesUpdated, notificationsResourcesUpdatedParams{
 				URI: uri,
-			})
+			}, s.formatMsgFunc)
 		case <-s.toolsListChan:
-			_ = writeNotifications(s.ctx, s.writer, methodNotificationsToolsListChanged, nil)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsToolsListChanged, nil, s.formatMsgFunc)
 		case params := <-s.logChan:
-			_ = writeNotifications(s.ctx, s.writer, methodNotificationsMessage, params)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsMessage, params, s.formatMsgFunc)
 		case params := <-s.progressChan:
-			_ = writeNotifications(s.ctx, s.writer, methodNotificationsProgress, params)
+			_ = writeNotifications(s.ctx, s.writer, methodNotificationsProgress, params, s.formatMsgFunc)
 		}
+		s.msgSentHook(s.id)
 	}
 }
 
@@ -131,9 +140,12 @@ func (s *serverSession) pings() {
 
 func (s *serverSession) handlePing(msgID MustString) error {
 	ctx, cancel := context.WithTimeout(s.ctx, s.writeTimeout)
-	defer cancel()
+	defer func() {
+		s.msgSentHook(s.id)
+		cancel()
+	}()
 
-	return writeResult(ctx, s.writer, msgID, nil)
+	return writeResult(ctx, s.writer, msgID, nil, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleInitialize(
@@ -144,24 +156,24 @@ func (s *serverSession) handleInitialize(
 	serverInfo Info,
 ) error {
 	ctx, cancel := context.WithTimeout(s.ctx, s.writeTimeout)
-	defer cancel()
+	defer func() {
+		s.msgSentHook(s.id)
+		cancel()
+	}()
 
 	if params.ProtocolVersion != protocolVersion {
 		nErr := fmt.Errorf("protocol version mismatch: %s != %s", params.ProtocolVersion, protocolVersion)
-		log.Print(nErr)
 		return s.sendError(ctx, jsonRPCInvalidParamsCode, errMsgUnsupportedProtocolVersion, msgID, nErr)
 	}
 
 	if requiredClientCap.Roots != nil {
 		if params.Capabilities.Roots == nil {
 			nErr := fmt.Errorf("insufficient client capabilities: missing required capability 'roots'")
-			log.Print(nErr)
 			return s.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientClientCapabilities, msgID, nErr)
 		}
 		if requiredClientCap.Roots.ListChanged {
 			if !params.Capabilities.Roots.ListChanged {
 				nErr := fmt.Errorf("insufficient client capabilities: missing required capability 'roots.listChanged'")
-				log.Print(nErr)
 				return s.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientClientCapabilities, msgID, nErr)
 			}
 		}
@@ -170,7 +182,6 @@ func (s *serverSession) handleInitialize(
 	if requiredClientCap.Sampling != nil {
 		if params.Capabilities.Sampling == nil {
 			nErr := fmt.Errorf("insufficient client capabilities: missing required capability 'sampling'")
-			log.Print(nErr)
 			return s.sendError(ctx, jsonRPCInvalidParamsCode, errMsgInsufficientClientCapabilities, msgID, nErr)
 		}
 	}
@@ -179,7 +190,7 @@ func (s *serverSession) handleInitialize(
 		ProtocolVersion: protocolVersion,
 		Capabilities:    serverCap,
 		ServerInfo:      serverInfo,
-	})
+	}, s.formatMsgFunc)
 }
 
 func (s *serverSession) handlePromptsList(
@@ -207,7 +218,9 @@ func (s *serverSession) handlePromptsList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, ps)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, ps, s.formatMsgFunc)
 }
 
 func (s *serverSession) handlePromptsGet(
@@ -236,7 +249,9 @@ func (s *serverSession) handlePromptsGet(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, p)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, p, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleCompletePrompt(
@@ -265,7 +280,7 @@ func (s *serverSession) handleCompletePrompt(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, result)
+	return writeResult(wCtx, s.writer, msgID, result, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleResourcesList(
@@ -294,7 +309,9 @@ func (s *serverSession) handleResourcesList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, rs)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, rs, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleResourcesRead(
@@ -323,7 +340,9 @@ func (s *serverSession) handleResourcesRead(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, r)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, r, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleResourcesListTemplates(
@@ -352,7 +371,9 @@ func (s *serverSession) handleResourcesListTemplates(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, ts)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, ts, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleResourcesSubscribe(
@@ -378,7 +399,37 @@ func (s *serverSession) handleResourcesSubscribe(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, nil)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, nil, s.formatMsgFunc)
+}
+
+func (s *serverSession) handleResourcesUnsubscribe(
+	msgID MustString,
+	params ResourcesSubscribeParams,
+	server ResourceServer,
+) error {
+	if !s.isInitialized() {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+
+	s.clientRequests.Store(msgID, &request{
+		ctx:    ctx,
+		cancel: cancel,
+	})
+
+	server.UnsubscribeResource(params)
+	s.subscribedResources.Delete(params.URI)
+
+	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
+	defer wCancel()
+
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, nil, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleCompleteResource(
@@ -407,7 +458,9 @@ func (s *serverSession) handleCompleteResource(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, result)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, result, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleToolsList(
@@ -436,14 +489,12 @@ func (s *serverSession) handleToolsList(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, ts)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, ts, s.formatMsgFunc)
 }
 
-func (s *serverSession) handleToolsCall(
-	msgID MustString,
-	params ToolsCallParams,
-	server ToolServer,
-) error {
+func (s *serverSession) handleToolsCall(msgID MustString, params ToolsCallParams, server ToolServer) error {
 	if !s.isInitialized() {
 		return nil
 	}
@@ -465,7 +516,9 @@ func (s *serverSession) handleToolsCall(
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, s.writer, msgID, result)
+	defer s.msgSentHook(s.id)
+
+	return writeResult(wCtx, s.writer, msgID, result, s.formatMsgFunc)
 }
 
 func (s *serverSession) handleNotificationsInitialized() {
@@ -486,15 +539,22 @@ func (s *serverSession) handleNotificationsCancelled(params notificationsCancell
 	req.cancel()
 }
 
-func (s *serverSession) handleResult(msg JSONRPCMessage) error {
+func (s *serverSession) handleResult(msg JSONRPCMessage) {
 	reqID := string(msg.ID)
 	rc, ok := s.serverRequests.Load(reqID)
 	if !ok {
-		return nil
+		return
 	}
 	resChan, _ := rc.(chan JSONRPCMessage)
 	resChan <- msg
-	return nil
+}
+
+func (s *serverSession) handleLoggingSetLevel(params LogParams, handler LogHandler) {
+	if !s.isInitialized() {
+		return
+	}
+
+	handler.SetLogLevel(params.Level)
 }
 
 func (s *serverSession) isInitialized() bool {
@@ -517,9 +577,11 @@ func (s *serverSession) listRoots() (RootList, error) {
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodRootsList, nil); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodRootsList, nil, s.formatMsgFunc); err != nil {
 		return RootList{}, fmt.Errorf("failed to write message: %w", err)
 	}
+
+	s.msgSentHook(s.id)
 
 	ticker := time.NewTicker(s.readTimeout)
 
@@ -549,9 +611,12 @@ func (s *serverSession) createSampleMessage(params SamplingParams) (SamplingResu
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodSamplingCreateMessage, params); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), MethodSamplingCreateMessage,
+		params, s.formatMsgFunc); err != nil {
 		return SamplingResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
+
+	s.msgSentHook(s.id)
 
 	ticker := time.NewTicker(s.readTimeout)
 
@@ -581,9 +646,11 @@ func (s *serverSession) ping() error {
 	wCtx, wCancel := context.WithTimeout(s.ctx, s.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, s.writer, MustString(reqID), methodPing, nil); err != nil {
+	if err := writeParams(wCtx, s.writer, MustString(reqID), methodPing, nil, s.formatMsgFunc); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
+
+	s.msgSentHook(s.id)
 
 	ticker := time.NewTicker(s.readTimeout)
 
@@ -591,7 +658,7 @@ func (s *serverSession) ping() error {
 
 	select {
 	case <-ticker.C:
-		return fmt.Errorf("ping timeout")
+		return fmt.Errorf("server ping timeout")
 	case <-wCtx.Done():
 		return wCtx.Err()
 	case msg = <-resChan:
@@ -609,7 +676,7 @@ func (s *serverSession) sendError(ctx context.Context, code int, message string,
 		Code:    code,
 		Message: message,
 		Data:    map[string]any{"error": err.Error()},
-	})
+	}, s.formatMsgFunc)
 }
 
 func (c *clientSession) listen() {
@@ -619,7 +686,7 @@ func (c *clientSession) listen() {
 			c.stopChan <- c.id
 			return
 		case <-c.rootsListChan:
-			_ = writeNotifications(c.ctx, c.writter, methodNotificationsRootsListChanged, nil)
+			_ = writeNotifications(c.ctx, c.writter, methodNotificationsRootsListChanged, nil, nopFormatMsgFunc)
 		}
 	}
 }
@@ -643,7 +710,7 @@ func (c *clientSession) handlePing(msgID MustString) error {
 	ctx, cancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer cancel()
 
-	return writeResult(ctx, c.writter, msgID, nil)
+	return writeResult(ctx, c.writter, msgID, nil, nopFormatMsgFunc)
 }
 
 func (c *clientSession) handleRootsList(msgID MustString, handler RootsListHandler) error {
@@ -664,7 +731,7 @@ func (c *clientSession) handleRootsList(msgID MustString, handler RootsListHandl
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, c.writter, msgID, roots)
+	return writeResult(wCtx, c.writter, msgID, roots, nopFormatMsgFunc)
 }
 
 func (c *clientSession) handleSamplingCreateMessage(
@@ -689,7 +756,7 @@ func (c *clientSession) handleSamplingCreateMessage(
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	return writeResult(wCtx, c.writter, msgID, result)
+	return writeResult(wCtx, c.writter, msgID, result, nopFormatMsgFunc)
 }
 
 func (c *clientSession) handleNotificationsCancelled(params notificationsCancelledParams) {
@@ -735,7 +802,7 @@ func (c *clientSession) initialize(
 		ProtocolVersion: protocolVersion,
 		Capabilities:    capabilities,
 		ClientInfo:      info,
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -776,7 +843,7 @@ func (c *clientSession) initialize(
 	defer c.initLock.Unlock()
 	c.initialized = true
 
-	return writeNotifications(ctx, c.writter, methodNotificationsInitialized, nil)
+	return writeNotifications(ctx, c.writter, methodNotificationsInitialized, nil, nopFormatMsgFunc)
 }
 
 func (c *clientSession) listPrompts(cursor string, progressToken MustString) (PromptList, error) {
@@ -788,7 +855,7 @@ func (c *clientSession) listPrompts(cursor string, progressToken MustString) (Pr
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodPromptsList, PromptsListParams{
 		Cursor: cursor,
 		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return PromptList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -809,7 +876,7 @@ func (c *clientSession) listPrompts(cursor string, progressToken MustString) (Pr
 		return PromptList{}, writeNotifications(cCtx, c.writter, methodNotificationsCancelled, notificationsCancelledParams{
 			RequestID: reqID,
 			Reason:    userCancelledReason,
-		})
+		}, nopFormatMsgFunc)
 	case msg = <-resChan:
 	}
 
@@ -823,7 +890,11 @@ func (c *clientSession) listPrompts(cursor string, progressToken MustString) (Pr
 	return result, nil
 }
 
-func (c *clientSession) getPrompt(name string, arguments map[string]any, progressToken MustString) (Prompt, error) {
+func (c *clientSession) getPrompt(
+	name string,
+	arguments map[string]string,
+	progressToken MustString,
+) (PromptResult, error) {
 	reqID, resChan := c.registerRequest()
 
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
@@ -833,8 +904,8 @@ func (c *clientSession) getPrompt(name string, arguments map[string]any, progres
 		Name:      name,
 		Arguments: arguments,
 		Meta:      ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
-		return Prompt{}, fmt.Errorf("failed to write message: %w", err)
+	}, nopFormatMsgFunc); err != nil {
+		return PromptResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
 	ticker := time.NewTicker(c.readTimeout)
@@ -843,18 +914,18 @@ func (c *clientSession) getPrompt(name string, arguments map[string]any, progres
 
 	select {
 	case <-ticker.C:
-		return Prompt{}, fmt.Errorf("get prompt timeout")
+		return PromptResult{}, fmt.Errorf("get prompt timeout")
 	case <-wCtx.Done():
-		return Prompt{}, wCtx.Err()
+		return PromptResult{}, wCtx.Err()
 	case msg = <-resChan:
 	}
 
 	if msg.Error != nil {
-		return Prompt{}, msg.Error
+		return PromptResult{}, msg.Error
 	}
-	var result Prompt
+	var result PromptResult
 	if err := json.Unmarshal(msg.Result, &result); err != nil {
-		return Prompt{}, err
+		return PromptResult{}, err
 	}
 	return result, nil
 }
@@ -871,7 +942,7 @@ func (c *clientSession) completesPrompt(name string, arg CompletionArgument) (Co
 			Name: name,
 		},
 		Argument: arg,
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return CompletionResult{}, err
 	}
 
@@ -907,7 +978,7 @@ func (c *clientSession) listResources(cursor string, progressToken MustString) (
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesList, ResourcesListParams{
 		Cursor: cursor,
 		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return ResourceList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -942,7 +1013,7 @@ func (c *clientSession) readResource(uri string, progressToken MustString) (Reso
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesRead, ResourcesReadParams{
 		URI:  uri,
 		Meta: ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return Resource{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -976,7 +1047,7 @@ func (c *clientSession) listResourceTemplates(progressToken MustString) ([]Resou
 
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesTemplatesList, ResourcesTemplatesListParams{
 		Meta: ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return nil, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -1014,7 +1085,7 @@ func (c *clientSession) completesResourceTemplate(uri string, arg CompletionArgu
 			URI:  uri,
 		},
 		Argument: arg,
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return CompletionResult{}, err
 	}
 
@@ -1049,7 +1120,7 @@ func (c *clientSession) subscribeResource(uri string) error {
 
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesSubscribe, ResourcesSubscribeParams{
 		URI: uri,
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -1072,6 +1143,37 @@ func (c *clientSession) subscribeResource(uri string) error {
 	return nil
 }
 
+func (c *clientSession) unsubscribeResource(uri string) error {
+	reqID, resChan := c.registerRequest()
+
+	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
+	defer wCancel()
+
+	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodResourcesUnsubscribe, ResourcesSubscribeParams{
+		URI: uri,
+	}, nopFormatMsgFunc); err != nil {
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+
+	ticker := time.NewTicker(c.readTimeout)
+
+	var msg JSONRPCMessage
+
+	select {
+	case <-ticker.C:
+		return fmt.Errorf("unsubscribe resource timeout")
+	case <-wCtx.Done():
+		return fmt.Errorf("unsubscribe resource canceled")
+	case msg = <-resChan:
+	}
+
+	if msg.Error != nil {
+		return fmt.Errorf("unsubscribe resource error: %w", msg.Error)
+	}
+
+	return nil
+}
+
 func (c *clientSession) listTools(cursor string, progressToken MustString) (ToolList, error) {
 	reqID, resChan := c.registerRequest()
 
@@ -1081,7 +1183,7 @@ func (c *clientSession) listTools(cursor string, progressToken MustString) (Tool
 	if err := writeParams(wCtx, c.writter, MustString(reqID), MethodToolsList, ToolsListParams{
 		Cursor: cursor,
 		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return ToolList{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -1117,7 +1219,7 @@ func (c *clientSession) callTool(name string, arguments map[string]any, progress
 		Name:      name,
 		Arguments: arguments,
 		Meta:      ParamsMeta{ProgressToken: progressToken},
-	}); err != nil {
+	}, nopFormatMsgFunc); err != nil {
 		return ToolResult{}, fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -1143,13 +1245,26 @@ func (c *clientSession) callTool(name string, arguments map[string]any, progress
 	return result, nil
 }
 
+func (c *clientSession) setLogLevel(level LogLevel) error {
+	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
+	defer wCancel()
+
+	if err := writeParams(wCtx, c.writter, MustString(uuid.New().String()), MethodLoggingSetLevel, LogParams{
+		Level: level,
+	}, nopFormatMsgFunc); err != nil {
+		return fmt.Errorf("failed to write message: %w", err)
+	}
+
+	return nil
+}
+
 func (c *clientSession) ping() error {
 	reqID, resChan := c.registerRequest()
 
 	wCtx, wCancel := context.WithTimeout(c.ctx, c.writeTimeout)
 	defer wCancel()
 
-	if err := writeParams(wCtx, c.writter, MustString(reqID), methodPing, nil); err != nil {
+	if err := writeParams(wCtx, c.writter, MustString(reqID), methodPing, nil, nopFormatMsgFunc); err != nil {
 		return fmt.Errorf("failed to write message: %w", err)
 	}
 
@@ -1159,7 +1274,7 @@ func (c *clientSession) ping() error {
 
 	select {
 	case <-ticker.C:
-		return fmt.Errorf("ping timeout")
+		return fmt.Errorf("client ping timeout")
 	case <-wCtx.Done():
 		return wCtx.Err()
 	case msg = <-resChan:
@@ -1226,9 +1341,11 @@ func (c *clientSession) checkCapabilities(result initializeResult, requiredServe
 	}
 
 	if requiredServerCap.Logging != nil {
-		nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'logging'")
-		log.Print(nErr)
-		return nErr
+		if result.Capabilities.Logging == nil {
+			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'logging'")
+			log.Print(nErr)
+			return nErr
+		}
 	}
 
 	return nil
@@ -1239,5 +1356,5 @@ func (c *clientSession) sendError(ctx context.Context, code int, message string,
 		Code:    code,
 		Message: message,
 		Data:    map[string]any{"error": err},
-	})
+	}, nopFormatMsgFunc)
 }

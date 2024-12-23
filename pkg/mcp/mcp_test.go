@@ -5,7 +5,7 @@ import (
 )
 
 type mockWriter struct {
-	sync.Mutex
+	sync.RWMutex
 	written []byte
 }
 
@@ -17,7 +17,7 @@ func (w *mockWriter) Write(p []byte) (int, error) {
 }
 
 func (w *mockWriter) getWritten() []byte {
-	w.Lock()
-	defer w.Unlock()
+	w.RLock()
+	defer w.RUnlock()
 	return w.written
 }

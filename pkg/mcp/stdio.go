@@ -115,12 +115,13 @@ func (s *StdIOClient) Run(
 	s.srv.srv.start()
 	defer func() {
 		s.srv.srv.stop()
+		close(readyChan)
 		close(errsChan)
 	}()
 
 	go s.listenWritter(ctx)
 
-	s.currentSessionID = s.srv.srv.startSession(ctx, s.writter)
+	s.currentSessionID = s.srv.srv.startSession(ctx, s.writter, nopFormatMsgFunc, nopMsgSentHook)
 	s.cli.startSession(ctx, s.writter, s.currentSessionID)
 
 	sessCtx := ctxWithSessionID(ctx, s.currentSessionID)
@@ -167,7 +168,7 @@ func (s *StdIOClient) Run(
 				errsChan <- err
 				continue
 			}
-			if err := writeError(sessCtx, out, input.ID, *jsonErr); err != nil {
+			if err := writeError(sessCtx, out, input.ID, *jsonErr, nopFormatMsgFunc); err != nil {
 				errsChan <- err
 			}
 			continue
@@ -205,7 +206,7 @@ func (s *StdIOClient) handlePromptsList(ctx context.Context, msg JSONRPCMessage,
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, pl)
+	return writeResult(ctx, out, msg.ID, pl, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handlePromptsGet(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -220,7 +221,7 @@ func (s *StdIOClient) handlePromptsGet(ctx context.Context, msg JSONRPCMessage, 
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, p)
+	return writeResult(ctx, out, msg.ID, p, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleResourcesList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -235,7 +236,7 @@ func (s *StdIOClient) handleResourcesList(ctx context.Context, msg JSONRPCMessag
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, rl)
+	return writeResult(ctx, out, msg.ID, rl, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleResourcesRead(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -250,7 +251,7 @@ func (s *StdIOClient) handleResourcesRead(ctx context.Context, msg JSONRPCMessag
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, r)
+	return writeResult(ctx, out, msg.ID, r, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleResourcesTemplatesList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -265,7 +266,7 @@ func (s *StdIOClient) handleResourcesTemplatesList(ctx context.Context, msg JSON
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, rl)
+	return writeResult(ctx, out, msg.ID, rl, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleResourcesSubscribe(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -279,7 +280,7 @@ func (s *StdIOClient) handleResourcesSubscribe(ctx context.Context, msg JSONRPCM
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, nil)
+	return writeResult(ctx, out, msg.ID, nil, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleToolsList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -294,7 +295,7 @@ func (s *StdIOClient) handleToolsList(ctx context.Context, msg JSONRPCMessage, o
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, tl)
+	return writeResult(ctx, out, msg.ID, tl, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) handleToolsCall(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
@@ -309,7 +310,7 @@ func (s *StdIOClient) handleToolsCall(ctx context.Context, msg JSONRPCMessage, o
 		return err
 	}
 
-	return writeResult(ctx, out, msg.ID, r)
+	return writeResult(ctx, out, msg.ID, r, nopFormatMsgFunc)
 }
 
 func (s *StdIOClient) listenWritter(ctx context.Context) {

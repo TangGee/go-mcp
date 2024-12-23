@@ -49,11 +49,11 @@ type PromptListUpdater interface {
 type ResourceServer interface {
 	// ListResources returns a paginated list of available resources.
 	// Returns error if operation fails or context is cancelled.
-	ListResources(ctx context.Context, params ResourcesListParams) (*ResourceList, error)
+	ListResources(ctx context.Context, params ResourcesListParams) (ResourceList, error)
 
 	// ReadResource retrieves a specific resource by its URI.
 	// Returns error if resource not found, cannot be read, or context is cancelled.
-	ReadResource(ctx context.Context, params ResourcesReadParams) (*Resource, error)
+	ReadResource(ctx context.Context, params ResourcesReadParams) (Resource, error)
 
 	// ListResourceTemplates returns all available resource templates.
 	// Returns error if templates cannot be retrieved or context is cancelled.
@@ -65,6 +65,9 @@ type ResourceServer interface {
 
 	// SubscribeResource registers interest in a specific resource URI.
 	SubscribeResource(params ResourcesSubscribeParams)
+
+	// UnsubscribeResource unregisters interest in a specific resource URI.
+	UnsubscribeResource(params ResourcesSubscribeParams)
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
@@ -146,6 +149,8 @@ type LogHandler interface {
 	// Messages below this level are filtered out.
 	SetLogLevel(level LogLevel)
 }
+
+// Client interfaces
 
 // RootsListWatcher provides an interface for receiving notifications when the client's root list changes.
 // The implementation can use these notifications to update its internal state or perform necessary actions
@@ -255,7 +260,7 @@ type PromptsGetParams struct {
 
 	// Arguments is a map of argument name-value pairs
 	// Must satisfy required arguments defined in prompt's Arguments field
-	Arguments map[string]any `json:"arguments"`
+	Arguments map[string]string `json:"arguments"`
 
 	// Meta contains optional metadata including:
 	// - progressToken: Unique token for tracking operation progress
@@ -418,7 +423,7 @@ type ToolResult struct {
 // ProgressParams represents the progress status of a long-running operation.
 type ProgressParams struct {
 	// ProgressToken uniquely identifies the operation this progress update relates to
-	ProgressToken string `json:"progressToken"`
+	ProgressToken MustString `json:"progressToken"`
 	// Progress represents the current progress value
 	Progress float64 `json:"value"`
 	// Total represents the expected final value when known.
@@ -444,7 +449,7 @@ type LogData struct {
 }
 
 // LogLevel represents the severity level of log messages.
-type LogLevel string
+type LogLevel int
 
 // RootList represents a collection of root resources in the system.
 // Contains:
@@ -535,12 +540,12 @@ const (
 
 // LogLevel represents the severity level of log messages.
 const (
-	LogLevelDebug     LogLevel = "debug"
-	LogLevelInfo      LogLevel = "info"
-	LogLevelNotice    LogLevel = "notice"
-	LogLevelWarning   LogLevel = "warning"
-	LogLevelError     LogLevel = "error"
-	LogLevelCritical  LogLevel = "critical"
-	LogLevelAlert     LogLevel = "alert"
-	LogLevelEmergency LogLevel = "emergency"
+	LogLevelDebug LogLevel = iota
+	LogLevelInfo
+	LogLevelNotice
+	LogLevelWarning
+	LogLevelError
+	LogLevelCritical
+	LogLevelAlert
+	LogLevelEmergency
 )

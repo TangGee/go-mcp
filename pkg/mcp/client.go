@@ -317,7 +317,7 @@ func (c client) handleBasicMessages(sess *clientSession, msg JSONRPCMessage) err
 }
 
 func (c client) handleRootMessages(sess *clientSession, msg JSONRPCMessage) error {
-	if c.rootsListHandler != nil {
+	if c.rootsListHandler == nil {
 		return nil
 	}
 
@@ -329,7 +329,7 @@ func (c client) handleRootMessages(sess *clientSession, msg JSONRPCMessage) erro
 }
 
 func (c client) handleSamplingMessages(sess *clientSession, msg JSONRPCMessage) error {
-	if c.samplingHandler != nil {
+	if c.samplingHandler == nil {
 		return nil
 	}
 
@@ -417,12 +417,12 @@ func (c client) listPrompts(ctx context.Context, cursor string, progressToken Mu
 func (c client) getPrompt(
 	ctx context.Context,
 	name string,
-	arguments map[string]any,
+	arguments map[string]string,
 	progressToken MustString,
-) (Prompt, error) {
+) (PromptResult, error) {
 	ss, ok := c.sessions.Load(sessionIDFromContext(ctx))
 	if !ok {
-		return Prompt{}, errSessionNotFound
+		return PromptResult{}, errSessionNotFound
 	}
 	sess, _ := ss.(*clientSession)
 	return sess.getPrompt(name, arguments, progressToken)
@@ -486,6 +486,15 @@ func (c client) subscribeResource(ctx context.Context, uri string) error {
 	return sess.subscribeResource(uri)
 }
 
+func (c client) unsubscribeResource(ctx context.Context, uri string) error {
+	ss, ok := c.sessions.Load(sessionIDFromContext(ctx))
+	if !ok {
+		return errSessionNotFound
+	}
+	sess, _ := ss.(*clientSession)
+	return sess.unsubscribeResource(uri)
+}
+
 func (c client) listTools(ctx context.Context, cursor string, progressToken MustString) (ToolList, error) {
 	ss, ok := c.sessions.Load(sessionIDFromContext(ctx))
 	if !ok {
@@ -507,6 +516,15 @@ func (c client) callTool(
 	}
 	sess, _ := ss.(*clientSession)
 	return sess.callTool(name, arguments, progressToken)
+}
+
+func (c client) setLogLevel(level LogLevel) error {
+	ss, ok := c.sessions.Load(sessionIDFromContext(context.Background()))
+	if !ok {
+		return errSessionNotFound
+	}
+	sess, _ := ss.(*clientSession)
+	return sess.setLogLevel(level)
 }
 
 func (c client) stop() {
