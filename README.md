@@ -107,7 +107,8 @@ The core package provides these key interfaces:
   ```go
   // Server setup
   sseServer := mcp.NewSSEServer(serverImpl)
-  http.HandleFunc("/sse", sseServer.HandleSSE)
+  http.HandleFunc("/sse", sseServer.HandleSSE(baseURL))
+  http.HandleFunc("/message", sseServer.HandleMessage())
   
   // Client setup
   sseClient := mcp.NewSSEClient(clientImpl, httpClient)
