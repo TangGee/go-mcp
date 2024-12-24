@@ -54,8 +54,11 @@ func NewStdIOClient(client Client, srv StdIOServer, option ...ClientOption) *Std
 	// Disable pings for stdio client
 	option = append(option, WithClientPingInterval(0))
 
+	cli := newClient(client, option...)
+	cli.start()
+
 	return &StdIOClient{
-		cli: newClient(client, option...),
+		cli: cli,
 		srv: srv,
 		writter: &stdIOWritter{
 			msgChan: make(chan JSONRPCMessage),
@@ -114,6 +117,7 @@ func (s *StdIOClient) Run(
 ) error {
 	s.srv.srv.start()
 	defer func() {
+		s.cli.stop()
 		s.srv.srv.stop()
 		close(readyChan)
 		close(errsChan)

@@ -67,8 +67,10 @@ func NewSSEServer(server Server, option ...ServerOption) SSEServer {
 //
 // Returns an initialized SSEClient ready to establish SSE connections.
 func NewSSEClient(client Client, baseURL string, httpClient *http.Client, option ...ClientOption) SSEClient {
+	cli := newClient(client, option...)
+	cli.start()
 	return SSEClient{
-		cli:        newClient(client, option...),
+		cli:        cli,
 		baseURL:    baseURL,
 		httpClient: httpClient,
 	}
@@ -438,6 +440,11 @@ func (s SSEClient) CallTool(ctx context.Context, sessionID string, params ToolsC
 // SetLogLevel sets the minimum severity level for emitted log messages.
 func (s SSEClient) SetLogLevel(level LogLevel) error {
 	return s.cli.setLogLevel(level)
+}
+
+// Close closes the SSEClient and stops all the sessions.
+func (s SSEClient) Close() {
+	s.cli.stop()
 }
 
 func (s SSEServer) flush(sessID string) {

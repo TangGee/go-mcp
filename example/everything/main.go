@@ -39,6 +39,7 @@ func main() {
 	cli := newClient()
 	go func() {
 		cli.run()
+		cli.cli.Close()
 	}()
 
 	<-cli.done
