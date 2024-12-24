@@ -150,8 +150,6 @@ type LogHandler interface {
 	SetLogLevel(level LogLevel)
 }
 
-// Client interfaces
-
 // RootsListWatcher provides an interface for receiving notifications when the client's root list changes.
 // The implementation can use these notifications to update its internal state or perform necessary actions
 // when the client's available roots change.
@@ -159,6 +157,8 @@ type RootsListWatcher interface {
 	// OnRootsListChanged is called when the client notifies that its root list has changed
 	OnRootsListChanged()
 }
+
+// Client interfaces
 
 // RootsListHandler defines the interface for retrieving the list of root resources in the MCP protocol.
 // Root resources represent top-level entry points in the resource hierarchy that clients can access.

@@ -67,6 +67,11 @@ func (s StdIOServer) Info() mcp.Info {
 	}
 }
 
+// RequireRootsListClient implements mcp.Server interface.
+func (s StdIOServer) RequireRootsListClient() bool {
+	return false
+}
+
 // RequireSamplingClient implements mcp.Server interface.
 // Indicates whether this server implementation requires a sampling-capable client.
 // For filesystem operations, sampling is not required so this always returns false.

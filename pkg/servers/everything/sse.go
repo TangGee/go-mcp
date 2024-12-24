@@ -67,6 +67,11 @@ func (s SSEServer) Info() mcp.Info {
 	}
 }
 
+// RequireRootsListClient implements mcp.Server interface.
+func (s SSEServer) RequireRootsListClient() bool {
+	return false
+}
+
 // RequireSamplingClient implements mcp.Server interface.
 func (s SSEServer) RequireSamplingClient() bool {
 	return true

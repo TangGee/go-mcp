@@ -14,6 +14,7 @@ import (
 // Server represents the main MCP server interface that users will implement.
 type Server interface {
 	Info() Info
+	RequireRootsListClient() bool
 	RequireSamplingClient() bool
 }
 
@@ -196,9 +197,12 @@ func newServer(srv Server, options ...ServerOption) server {
 
 	s.requiredClientCapabilities = ClientCapabilities{}
 
-	if s.rootsListWatcher != nil {
-		s.requiredClientCapabilities.Roots = &RootsCapability{
-			ListChanged: true,
+	if srv.RequireRootsListClient() {
+		s.requiredClientCapabilities.Roots = &RootsCapability{}
+		if s.rootsListWatcher != nil {
+			s.requiredClientCapabilities.Roots = &RootsCapability{
+				ListChanged: true,
+			}
 		}
 	}
 

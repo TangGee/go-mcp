@@ -106,9 +106,7 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		}
 
 		// Always flush after writing
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+		s.flush(sessID)
 
 		// Keep the connection open for new messages
 		select {
@@ -142,6 +140,12 @@ func (s SSEServer) HandleMessage() http.Handler {
 			return
 		}
 	})
+}
+
+// RequestListRoot retrieves a list of available roots from the client.
+// The context controls the request lifecycle and can be used for cancellation.
+func (s SSEServer) RequestListRoot(ctx context.Context) (RootList, error) {
+	return s.srv.listRoots(ctx)
 }
 
 // RequestSampling sends a sampling request to generate an AI model response based on the provided parameters.

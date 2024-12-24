@@ -2,36 +2,37 @@ package mcp_test
 
 import (
 	"context"
-	"os"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
 )
 
-func TestStdIORun(t *testing.T) {
+func TestSSEConnect(t *testing.T) {
 	type testCase struct {
 		name        string
-		srv         func() mcp.StdIOServer
-		cli         func(srv mcp.StdIOServer) *mcp.StdIOClient
+		srv         func() mcp.SSEServer
+		cli         func(baseURL string, httpClient *http.Client) mcp.SSEClient
 		wantSuccess bool
 	}
 
 	testCases := []testCase{
 		{
 			name: "success with no capabilities",
-			srv: func() mcp.StdIOServer {
-				return mcp.NewStdIOServer(&mockServer{})
+			srv: func() mcp.SSEServer {
+				return mcp.NewSSEServer(&mockServer{})
 			},
-			cli: func(srv mcp.StdIOServer) *mcp.StdIOClient {
-				return mcp.NewStdIOClient(&mockClient{}, srv)
+			cli: func(baseURL string, httpClient *http.Client) mcp.SSEClient {
+				return mcp.NewSSEClient(&mockClient{}, baseURL, httpClient)
 			},
 			wantSuccess: true,
 		},
 		{
 			name: "success with full capabilities",
-			srv: func() mcp.StdIOServer {
-				return mcp.NewStdIOServer(&mockServer{
+			srv: func() mcp.SSEServer {
+				return mcp.NewSSEServer(&mockServer{
 					requireRootsListClient: true,
 					requireSamplingClient:  true,
 				}, mcp.WithPromptServer(mockPromptServer{}),
@@ -41,12 +42,12 @@ func TestStdIORun(t *testing.T) {
 					mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 				)
 			},
-			cli: func(srv mcp.StdIOServer) *mcp.StdIOClient {
-				return mcp.NewStdIOClient(&mockClient{
+			cli: func(baseURL string, httpClient *http.Client) mcp.SSEClient {
+				return mcp.NewSSEClient(&mockClient{
 					requirePromptServer:   true,
 					requireResourceServer: true,
 					requireToolServer:     true,
-				}, srv, mcp.WithRootsListHandler(mockRootsListHandler{}),
+				}, baseURL, httpClient, mcp.WithRootsListHandler(mockRootsListHandler{}),
 					mcp.WithRootsListUpdater(mockRootsListUpdater{}),
 					mcp.WithSamplingHandler(mockSamplingHandler{}),
 					mcp.WithLogReceiver(mockLogReceiver{}),
@@ -56,20 +57,20 @@ func TestStdIORun(t *testing.T) {
 		},
 		{
 			name: "fail insufficient client capabilities",
-			srv: func() mcp.StdIOServer {
-				return mcp.NewStdIOServer(&mockServer{
+			srv: func() mcp.SSEServer {
+				return mcp.NewSSEServer(&mockServer{
 					requireRootsListClient: true,
 				}, mcp.WithPromptServer(mockPromptServer{}))
 			},
-			cli: func(srv mcp.StdIOServer) *mcp.StdIOClient {
-				return mcp.NewStdIOClient(&mockClient{}, srv)
+			cli: func(baseURL string, httpClient *http.Client) mcp.SSEClient {
+				return mcp.NewSSEClient(&mockClient{}, baseURL, httpClient)
 			},
 			wantSuccess: false,
 		},
 		{
 			name: "fail insufficient server capabilities",
-			srv: func() mcp.StdIOServer {
-				return mcp.NewStdIOServer(&mockServer{
+			srv: func() mcp.SSEServer {
+				return mcp.NewSSEServer(&mockServer{
 					requireRootsListClient: true,
 					requireSamplingClient:  true,
 				}, mcp.WithPromptServer(mockPromptServer{}),
@@ -78,12 +79,12 @@ func TestStdIORun(t *testing.T) {
 					mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 				)
 			},
-			cli: func(srv mcp.StdIOServer) *mcp.StdIOClient {
-				return mcp.NewStdIOClient(&mockClient{
+			cli: func(baseURL string, httpClient *http.Client) mcp.SSEClient {
+				return mcp.NewSSEClient(&mockClient{
 					requirePromptServer:   true,
 					requireResourceServer: true,
 					requireToolServer:     true,
-				}, srv,
+				}, baseURL, httpClient,
 					mcp.WithRootsListHandler(mockRootsListHandler{}),
 					mcp.WithRootsListUpdater(mockRootsListUpdater{}),
 					mcp.WithSamplingHandler(mockSamplingHandler{}),
@@ -96,37 +97,13 @@ func TestStdIORun(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := tc.srv()
-			cli := tc.cli(srv)
+			url, httpCli := startSSE(srv)
+			cli := tc.cli(url, httpCli)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			inReader, _, _ := os.Pipe()
-			_, outWriter, _ := os.Pipe()
-
-			readyChan := make(chan struct{})
-			runErrsChan := make(chan error)
-			errsChan := make(chan error)
-
-			go func() {
-				errsChan <- cli.Run(ctx, inReader, outWriter, readyChan, runErrsChan)
-			}()
-
-			select {
-			case <-ctx.Done():
-				t.Fatalf("Run timed out")
-			case <-readyChan:
-			}
-
-			var err error
-			ticker := time.NewTicker(time.Second)
-			select {
-			case <-ctx.Done():
-				t.Fatalf("Run timed out")
-			case err = <-errsChan:
-			case <-ticker.C:
-				// No error received
-			}
+			sessID, err := cli.Connect(ctx)
 
 			if !tc.wantSuccess {
 				if err == nil {
@@ -138,6 +115,22 @@ func TestStdIORun(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
+
+			if sessID == "" {
+				t.Errorf("expected session ID, got empty string")
+			}
 		})
 	}
+}
+
+func startSSE(srv mcp.SSEServer) (string, *http.Client) {
+	mux := http.NewServeMux()
+	httpSrv := httptest.NewServer(mux)
+
+	baseURL := fmt.Sprintf("%s/sse", httpSrv.URL)
+	msgBaseURL := fmt.Sprintf("%s/message", httpSrv.URL)
+	mux.Handle("/sse", srv.HandleSSE(msgBaseURL))
+	mux.Handle("/message", srv.HandleMessage())
+
+	return baseURL, httpSrv.Client()
 }
