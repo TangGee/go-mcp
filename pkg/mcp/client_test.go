@@ -6,11 +6,13 @@ import (
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
 )
 
-type mockClient struct {
-	requirePromptServer   bool
-	requireResourceServer bool
-	requireToolServer     bool
-}
+type mockPromptListWatcher struct{}
+
+type mockResourceListWatcher struct{}
+
+type mockResourceSubscribedWatcher struct{}
+
+type mockToolListWatcher struct{}
 
 type mockRootsListHandler struct{}
 
@@ -22,20 +24,16 @@ type mockSamplingHandler struct{}
 
 type mockLogReceiver struct{}
 
-func (m mockClient) Info() mcp.Info {
-	return mcp.Info{Name: "test-client", Version: "1.0"}
+func (m mockPromptListWatcher) OnPromptListChanged() {
 }
 
-func (m mockClient) RequirePromptServer() bool {
-	return m.requirePromptServer
+func (m mockResourceListWatcher) OnResourceListChanged() {
 }
 
-func (m mockClient) RequireResourceServer() bool {
-	return m.requireResourceServer
+func (m mockResourceSubscribedWatcher) OnResourceSubscribedChanged(string) {
 }
 
-func (m mockClient) RequireToolServer() bool {
-	return m.requireToolServer
+func (m mockToolListWatcher) OnToolListChanged() {
 }
 
 func (m mockRootsListHandler) RootsList(context.Context) (mcp.RootList, error) {

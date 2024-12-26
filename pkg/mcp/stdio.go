@@ -1,357 +1,191 @@
 package mcp
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 )
 
-// StdIOServer implements a JSON-RPC server over standard I/O.
-// It wraps an underlying server implementation and handles message routing
-// and protocol handling for stdio-based communication.
-type StdIOServer struct {
-	srv server
+// StdIO implements a standard input/output transport layer for MCP communication.
+// It provides bidirectional message passing using stdin/stdout or similar io.Reader/io.Writer
+// pairs, with JSON-RPC message encoding.
+//
+// StdIO manages a single persistent session and handles message routing through
+// internal channels. It provides non-blocking error reporting and graceful shutdown
+// capabilities through its channel-based architecture.
+//
+// The transport layer maintains a single persistent session identified by "1" and
+// processes messages sequentially through its internal channels. Error handling is
+// managed through a dedicated error channel that provides non-blocking error reporting.
+type StdIO struct {
+	reader io.Reader
+	writer io.Writer
+
+	messagesChan chan SessionMsgWithErrs
+	errsChan     chan error
+	closeChan    chan struct{}
 }
 
-// StdIOClient implements a JSON-RPC client over standard I/O.
-// It manages bidirectional communication with a StdIOServer, handling
-// message routing, session management, and protocol-specific operations.
-// The client supports various MCP operations like prompts, resources and tools
-// through a unified stdio interface.
-type StdIOClient struct {
-	cli client
-	srv StdIOServer
-
-	writter *stdIOWritter
-
-	currentSessionID string
-}
-
-type stdIOWritter struct {
-	written []byte
-	msgChan chan JSONRPCMessage
-}
-
-// NewStdIOServer creates a new StdIOServer instance with the given server implementation
-// and optional server configuration options. It automatically disables ping intervals
-// since they are not needed for stdio-based communication.
-func NewStdIOServer(server Server, option ...ServerOption) StdIOServer {
-	// Disable pings for stdio server
-	option = append(option, WithServerPingInterval(0))
-
-	return StdIOServer{
-		srv: newServer(server, option...),
+// NewStdIO creates a new standard IO transport instance using the provided reader and writer.
+// The reader is typically os.Stdin and writer is typically os.Stdout, though any io.Reader
+// and io.Writer implementations can be used for testing or custom IO scenarios.
+//
+// It initializes internal channels for message passing, error handling, and shutdown
+// coordination. The transport is ready for use immediately after creation but requires
+// Start() to be called to begin processing messages.
+// and io.Writer implementations can be used for testing or custom IO scenarios.
+func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
+	return StdIO{
+		reader:       reader,
+		writer:       writer,
+		messagesChan: make(chan SessionMsgWithErrs),
+		errsChan:     make(chan error),
+		closeChan:    make(chan struct{}),
 	}
 }
 
-// NewStdIOClient creates a new StdIOClient instance with the given client implementation,
-// StdIOServer and optional client configuration options. It automatically disables ping
-// intervals since they are not needed for stdio-based communication.
-func NewStdIOClient(client Client, srv StdIOServer, option ...ClientOption) *StdIOClient {
-	// Disable pings for stdio client
-	option = append(option, WithClientPingInterval(0))
+// Start begins processing input messages from the reader in a blocking manner.
+// It continuously reads JSON-RPC messages line by line, unmarshals them, and
+// forwards them to the message channel for processing.
+//
+// The processing loop continues until either the reader is exhausted or Close()
+// is called. Any unmarshaling or processing errors are sent to the error channel.
+//
+// This method should typically be called in a separate goroutine as it blocks
+// until completion or shutdown.
+func (s StdIO) Start() {
+	scanner := bufio.NewScanner(s.reader)
+	for scanner.Scan() {
+		select {
+		case <-s.closeChan:
+			return
+		default:
+		}
 
-	cli := newClient(client, option...)
-	cli.start()
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
 
-	return &StdIOClient{
-		cli: cli,
-		srv: srv,
-		writter: &stdIOWritter{
-			msgChan: make(chan JSONRPCMessage),
-		},
+		var msg JSONRPCMessage
+		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			s.logError(fmt.Errorf("failed to unmarshal message: %w", err))
+			continue
+		}
+
+		errs := make(chan error)
+		s.messagesChan <- SessionMsgWithErrs{
+			SessionID: "1",
+			Msg:       msg,
+			Errs:      errs,
+		}
+
+		if err := <-errs; err != nil {
+			s.logError(fmt.Errorf("failed to handle message: %w", err))
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		s.logError(fmt.Errorf("failed to read messages: %w", err))
 	}
 }
 
-func waitStdIOInput(ctx context.Context, in io.Reader) (JSONRPCMessage, error) {
-	inputChan := make(chan []byte)
-	errChan := make(chan error)
+// Send writes a JSON-RPC message to the writer with context cancellation support.
+// It marshals the message to JSON, appends a newline, and writes it to the underlying writer.
+//
+// The context allows for cancellation of long-running write operations. If the context
+// is cancelled before the write completes, the operation is abandoned and ctx.Err() is returned.
+//
+// Returns an error if marshaling fails, the write operation fails, or the context is cancelled.
+func (s StdIO) Send(ctx context.Context, msg SessionMsg) error {
+	msgBs, err := json.Marshal(msg.Msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+	msgBs = append(msgBs, '\n')
+
+	errs := make(chan error)
+
 	go func() {
-		bs := make([]byte, 1024)
-		n, err := in.Read(bs)
+		_, err = s.writer.Write(msgBs)
 		if err != nil {
-			errChan <- err
+			errs <- fmt.Errorf("failed to write message: %w", err)
 			return
 		}
-		inputChan <- bs[:n]
+		errs <- nil
 	}()
-
-	var input []byte
 
 	select {
 	case <-ctx.Done():
-		return JSONRPCMessage{}, ctx.Err()
-	case err := <-errChan:
-		return JSONRPCMessage{}, err
-	case input = <-inputChan:
+		return ctx.Err()
+	case err = <-errs:
 	}
 
-	var res JSONRPCMessage
-	if err := json.Unmarshal(input, &res); err != nil {
-		return JSONRPCMessage{}, errInvalidJSON
-	}
-
-	return res, nil
+	return err
 }
 
-// Run starts the StdIOClient's main processing loop and manages the client-server communication.
-// It initializes a session, processes incoming JSON-RPC messages, and handles various MCP operations.
+// SessionMessages returns a receive-only channel that provides access to incoming
+// messages with their associated error channels. Each message is wrapped in a
+// SessionMsgWithErrs struct that includes the session ID and an error channel
+// for reporting processing results.
 //
-// The provided context controls cancellation and timeout. The method reads JSON-RPC messages
-// from the supplied io.Reader and writes responses to the io.Writer. When initialization is
-// complete, a signal is sent on readyChan. During operation, any non-fatal errors encountered
-// during message processing are sent to errsChan.
+// The channel is closed when the StdIO instance is closed via Close().
+func (s StdIO) SessionMessages() <-chan SessionMsgWithErrs {
+	return s.messagesChan
+}
+
+// Close terminates the StdIO transport by closing the message and control channels.
+// This will cause the Start() method to exit if it is running and prevent any
+// new messages from being processed.
 //
-// The method continues running until either the context is cancelled or a fatal error occurs.
-// Non-fatal errors such as invalid JSON are reported through errsChan, while fatal errors
-// are returned directly. The errsChan is closed when Run exits.
-func (s *StdIOClient) Run(
-	ctx context.Context,
-	in io.Reader,
-	out io.Writer,
-	readyChan chan<- struct{},
-	errsChan chan<- error,
-) error {
-	s.srv.srv.start()
-	defer func() {
-		s.cli.stop()
-		s.srv.srv.stop()
-		close(readyChan)
-		close(errsChan)
+// After Close() is called, the transport cannot be reused and a new instance
+// should be created if needed.
+func (s StdIO) Close() {
+	close(s.messagesChan)
+	close(s.closeChan)
+}
+
+// Sessions returns a receive-only channel that provides the single session context
+// used by this transport. Since StdIO only supports a single session, this method
+// sends one SessionCtx with ID "1" and a background context.
+//
+// The returned channel should be consumed to prevent goroutine leaks.
+func (s StdIO) Sessions() <-chan SessionCtx {
+	sessions := make(chan SessionCtx)
+	go func() {
+		sessions <- SessionCtx{
+			Ctx: context.Background(),
+			ID:  "1",
+		}
 	}()
 
-	go s.listenWritter(ctx)
-
-	s.currentSessionID = s.srv.srv.startSession(ctx, s.writter, nopFormatMsgFunc, nopMsgSentHook)
-	s.cli.startSession(ctx, s.writter, s.currentSessionID)
-
-	sessCtx := ctxWithSessionID(ctx, s.currentSessionID)
-	if err := s.cli.initialize(sessCtx); err != nil {
-		return fmt.Errorf("failed to initialize session: %w", err)
-	}
-
-	readyChan <- struct{}{}
-
-	for {
-		input, err := waitStdIOInput(ctx, in)
-		if err != nil {
-			if errors.Is(err, errInvalidJSON) {
-				errsChan <- errInvalidJSON
-				continue
-			}
-			return err
-		}
-
-		switch input.Method {
-		case MethodPromptsList:
-			err = s.handlePromptsList(sessCtx, input, out)
-		case MethodPromptsGet:
-			err = s.handlePromptsGet(sessCtx, input, out)
-		case MethodResourcesList:
-			err = s.handleResourcesList(sessCtx, input, out)
-		case MethodResourcesRead:
-			err = s.handleResourcesRead(sessCtx, input, out)
-		case MethodResourcesTemplatesList:
-			err = s.handleResourcesTemplatesList(sessCtx, input, out)
-		case MethodResourcesSubscribe:
-			err = s.handleResourcesSubscribe(sessCtx, input, out)
-		case MethodToolsList:
-			err = s.handleToolsList(sessCtx, input, out)
-		case MethodToolsCall:
-			err = s.handleToolsCall(sessCtx, input, out)
-		default:
-			continue
-		}
-
-		if err != nil {
-			var jsonErr *jsonRPCError
-			if !errors.As(err, &jsonErr) {
-				errsChan <- err
-				continue
-			}
-			if err := writeError(sessCtx, out, input.ID, *jsonErr, nopFormatMsgFunc); err != nil {
-				errsChan <- err
-			}
-			continue
-		}
-	}
+	return sessions
 }
 
-// PromptsCommandsAvailable returns true if the client supports prompt-related commands
-// based on the server's capabilities.
-func (s *StdIOClient) PromptsCommandsAvailable() bool {
-	return s.cli.requiredServerCapabilities.Prompts != nil
+// StartSession initializes a new session for the StdIO transport. Since this
+// implementation only supports a single session, it always returns the session
+// ID "1" with no error.
+//
+// This method is part of the Transport interface but has limited utility in
+// the StdIO implementation due to its single-session nature.
+func (s StdIO) StartSession() (string, error) {
+	return "1", nil
 }
 
-// ResourcesCommandsAvailable returns true if the client supports resource-related commands
-// based on the server's capabilities.
-func (s *StdIOClient) ResourcesCommandsAvailable() bool {
-	return s.cli.requiredServerCapabilities.Resources != nil
+// Errors returns a receive-only channel that provides access to transport-level
+// errors. These may include message parsing errors, write failures, or other
+// operational issues encountered during transport operation.
+//
+// The channel is non-blocking and may drop errors if not consumed quickly enough.
+func (s StdIO) Errors() <-chan error {
+	return s.errsChan
 }
 
-// ToolsCommandsAvailable returns true if the client supports tool-related commands
-// based on the server's capabilities.
-func (s *StdIOClient) ToolsCommandsAvailable() bool {
-	return s.cli.requiredServerCapabilities.Tools != nil
-}
-
-func (s *StdIOClient) handlePromptsList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params PromptsListParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
+func (s StdIO) logError(err error) {
+	select {
+	case s.errsChan <- err:
+	default:
 	}
-
-	pl, err := s.cli.listPrompts(ctx, params.Cursor, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, pl, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handlePromptsGet(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params PromptsGetParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	p, err := s.cli.getPrompt(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, p, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleResourcesList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ResourcesListParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	rl, err := s.cli.listResources(ctx, params.Cursor, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, rl, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleResourcesRead(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ResourcesReadParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	r, err := s.cli.readResource(ctx, params.URI, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, r, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleResourcesTemplatesList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ResourcesTemplatesListParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	rl, err := s.cli.listResourceTemplates(ctx, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, rl, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleResourcesSubscribe(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ResourcesSubscribeParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	if err := s.cli.subscribeResource(ctx, params.URI); err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, nil, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleToolsList(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ToolsListParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	tl, err := s.cli.listTools(ctx, params.Cursor, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, tl, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) handleToolsCall(ctx context.Context, msg JSONRPCMessage, out io.Writer) error {
-	var params ToolsCallParams
-
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		return errInvalidJSON
-	}
-
-	r, err := s.cli.callTool(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
-	if err != nil {
-		return err
-	}
-
-	return writeResult(ctx, out, msg.ID, r, nopFormatMsgFunc)
-}
-
-func (s *StdIOClient) listenWritter(ctx context.Context) {
-	var msg JSONRPCMessage
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg = <-s.writter.msgChan:
-		}
-
-		msgBs, _ := json.Marshal(msg)
-
-		go func() {
-			sr := bytes.NewReader(msgBs)
-			if err := s.srv.srv.handleMsg(sr, s.currentSessionID); err != nil {
-				return
-			}
-			cr := bytes.NewReader(msgBs)
-			if err := s.cli.handleMsg(cr, s.currentSessionID); err != nil {
-				return
-			}
-		}()
-	}
-}
-
-func (s *stdIOWritter) Write(p []byte) (int, error) {
-	s.written = append(s.written, p...)
-
-	var msg JSONRPCMessage
-	if err := json.Unmarshal(s.written, &msg); err != nil {
-		// Ignore invalid JSON
-		//nolint:nilerr // This is a valid error
-		return len(p), nil
-	}
-
-	s.written = make([]byte, 0)
-	s.msgChan <- msg
-	return len(p), nil
 }

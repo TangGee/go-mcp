@@ -4,86 +4,145 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
-// SSEServer implements a Server-Sent Events (SSE) server that wraps an MCP server implementation.
-// It manages SSE connections and handles bidirectional communication between clients and the underlying MCP server.
-// The server maintains a mapping of session IDs to writers for sending events to connected clients.
+// SSEServer implements a Server-Sent Events (SSE) server that manages client connections
+// and message distribution. It provides bidirectional communication through SSE for
+// server-to-client streaming and HTTP POST for client-to-server messages.
+//
+// The server maintains active client connections and handles message routing through
+// channels while providing thread-safe operations using sync.Map for connection management.
 type SSEServer struct {
-	srv server
+	// writers is a map of sessionID to http.ResponseWriter
+	writers *sync.Map
 
-	writers   *sync.Map // map[sessionID]io.Writer
-	closeChan chan struct{}
-
-	flushLock *sync.Mutex
+	sessionsChan chan SessionCtx
+	messagesChan chan SessionMsgWithErrs
+	errsChan     chan error
+	closeChan    chan struct{}
 }
 
-// SSEClient implements a Server-Sent Events (SSE) client that connects to an MCP SSE server.
-// It handles the connection and provides methods to make requests to the server.
+// SSEClient implements a Server-Sent Events (SSE) client that manages server connections
+// and bidirectional message handling. It provides real-time communication through SSE for
+// server-to-client streaming and HTTP POST for client-to-server messages.
+//
+// The client maintains a persistent connection to the server and handles message routing
+// through channels while providing automatic reconnection and error handling capabilities.
 type SSEClient struct {
-	cli        client
+	httpClient *http.Client
 	baseURL    string
-	httpClient *http.Client
+	messageURL string
+
+	messagesChan chan SessionMsgWithErrs
+	errsChan     chan error
+	closeChan    chan struct{}
 }
 
-type sseWritter struct {
-	httpClient *http.Client
-	url        string
-	writeLock  *sync.Mutex
-}
-
-// NewSSEServer creates a new SSE server instance wrapping the provided MCP server implementation.
-// It initializes the underlying server with the given options and starts listening for events.
-//
-// The server parameter specifies the MCP Server implementation to wrap.
-// The option parameter provides optional ServerOptions to configure the underlying server behavior.
-//
-// Returns an initialized SSEServer ready to handle SSE connections.
-func NewSSEServer(server Server, option ...ServerOption) SSEServer {
-	s := newServer(server, option...)
-	s.start()
+// NewSSEServer creates and initializes a new SSE server instance with all necessary
+// channels for session management, message handling, and error reporting.
+func NewSSEServer() SSEServer {
 	return SSEServer{
-		srv:       s,
-		writers:   new(sync.Map),
-		closeChan: make(chan struct{}),
-		flushLock: new(sync.Mutex),
+		writers:      new(sync.Map),
+		sessionsChan: make(chan SessionCtx, 1),
+		messagesChan: make(chan SessionMsgWithErrs),
+		errsChan:     make(chan error),
+		closeChan:    make(chan struct{}),
 	}
 }
 
-// NewSSEClient creates a new Server-Sent Events (SSE) client instance that connects to an MCP SSE server.
-// It initializes the underlying client with the provided options and configures the HTTP client for SSE communication.
+// NewSSEClient creates and initializes a new SSE client instance with the specified
+// base URL and HTTP client. If httpClient is nil, the default HTTP client will be used.
 //
-// The client parameter specifies the MCP Client implementation to wrap.
-// The baseURL parameter defines the server endpoint URL to connect to.
-// The httpClient parameter allows customizing the HTTP client used for SSE connections.
-// The option parameter provides optional ClientOptions to configure the underlying client behavior.
-//
-// Returns an initialized SSEClient ready to establish SSE connections.
-func NewSSEClient(client Client, baseURL string, httpClient *http.Client, option ...ClientOption) SSEClient {
-	cli := newClient(client, option...)
-	cli.start()
-	return SSEClient{
-		cli:        cli,
-		baseURL:    baseURL,
-		httpClient: httpClient,
+// The baseURL parameter should point to the SSE endpoint of the server.
+func NewSSEClient(baseURL string, httpClient *http.Client) *SSEClient {
+	return &SSEClient{
+		httpClient:   httpClient,
+		baseURL:      baseURL,
+		messagesChan: make(chan SessionMsgWithErrs),
+		errsChan:     make(chan error),
+		closeChan:    make(chan struct{}),
 	}
+}
+
+// Send delivers a message to a specific client session identified by the SessionMsg.
+// It marshals the message to JSON and writes it to the client's event stream.
+// The operation can be cancelled via the provided context.
+//
+// Returns an error if the session is not found, message marshaling fails,
+// or the write operation fails.
+func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
+	w, ok := s.writers.Load(msg.SessionID)
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+	wr, _ := w.(http.ResponseWriter)
+
+	msgBs, err := json.Marshal(msg.Msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	errs := make(chan error)
+
+	go func() {
+		_, err = fmt.Fprintf(wr, "message: %s\n\n", msgBs)
+		if err != nil {
+			errs <- fmt.Errorf("failed to write message: %w", err)
+			return
+		}
+
+		f, fOk := w.(http.Flusher)
+		if fOk {
+			f.Flush()
+		}
+		errs <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err = <-errs:
+	}
+
+	return err
+}
+
+// Sessions returns a receive-only channel that provides notifications of new client
+// sessions. Each SessionCtx contains the session ID and associated context.
+func (s SSEServer) Sessions() <-chan SessionCtx {
+	return s.sessionsChan
+}
+
+// SessionMessages returns a receive-only channel that provides incoming messages
+// from clients. Each message includes the session ID, the message content,
+// and an error channel for reporting processing results back to the client.
+func (s SSEServer) SessionMessages() <-chan SessionMsgWithErrs {
+	return s.messagesChan
+}
+
+// Errors returns a receive-only channel that provides server-side errors
+// that occur during operation. This includes connection, message handling,
+// and internal processing errors.
+func (s SSEServer) Errors() <-chan error {
+	return s.errsChan
 }
 
 // HandleSSE returns an http.Handler that manages SSE connections from clients.
-// It sets up appropriate SSE headers, creates a new session, and keeps the connection alive
-// for streaming events. The handler sends the initial message URL to the client for subsequent
-// message submissions.
+// It sets up appropriate headers for SSE communication, creates a new session,
+// and maintains the connection until closed by the client or server.
 //
-// The messageBaseURL parameter defines the base URL where clients should submit messages for this SSE connection.
-//
-// The returned handler maintains the SSE connection until the client disconnects or the context is cancelled.
+// The messageBaseURL parameter specifies the base URL for client message endpoints.
+// Each client receives a unique message endpoint URL with their session ID.
 func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -93,22 +152,26 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		// Disable chunked encoding to avoid issues with SSE
 		w.Header().Set("Transfer-Encoding", "identity")
 
-		fmFunc := func(msg []byte) []byte {
-			return []byte(fmt.Sprintf("message: %s\n\n", msg))
+		sessID := uuid.New().String()
+		s.sessionsChan <- SessionCtx{
+			Ctx: r.Context(),
+			ID:  sessID,
 		}
-
-		sessID := s.srv.startSession(r.Context(), w, fmFunc, s.flush)
 		s.writers.Store(sessID, w)
 
 		url := fmt.Sprintf("%s?sessionID=%s", messageBaseURL, sessID)
 		_, err := fmt.Fprintf(w, "endpoint: %s\n\n", url)
 		if err != nil {
-			log.Printf("failed to write SSE URL: %v", err)
+			nErr := fmt.Errorf("failed to write SSE URL: %w", err)
+			http.Error(w, nErr.Error(), http.StatusInternalServerError)
+			s.logError(nErr)
 			return
 		}
 
-		// Always flush after writing
-		s.flush(sessID)
+		f, ok := w.(http.Flusher)
+		if ok {
+			f.Flush()
+		}
 
 		// Keep the connection open for new messages
 		select {
@@ -119,68 +182,102 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 	})
 }
 
-// HandleMessage returns an http.Handler that processes incoming messages from SSE clients.
-// It expects a sessionID query parameter to identify the associated SSE connection.
-// Messages are forwarded to the underlying MCP server for processing.
+// HandleMessage returns an http.Handler that processes incoming messages from clients
+// via HTTP POST requests. It expects a session ID as a query parameter and the message
+// content as JSON in the request body.
 //
-// The handler validates:
-//   - Presence of sessionID parameter
-//   - Existence of the specified session
-//   - Message handling by the underlying server
-//
-// After successful message handling, it flushes the response to ensure immediate delivery.
+// Messages are validated and routed through the server's message channel system
+// for processing. Results are communicated back through the response.
 func (s SSEServer) HandleMessage() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessID := r.URL.Query().Get("sessionID")
 		if sessID == "" {
-			http.Error(w, "missing sessionID query parameter", http.StatusBadRequest)
+			nErr := fmt.Errorf("missing sessionID query parameter")
+			s.logError(nErr)
+			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
 
-		if err := s.srv.handleMsg(r.Body, sessID); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		decoder := json.NewDecoder(r.Body)
+		var msg JSONRPCMessage
+
+		if err := decoder.Decode(&msg); err != nil {
+			nErr := fmt.Errorf("failed to decode message: %w", err)
+			s.logError(nErr)
+			http.Error(w, nErr.Error(), http.StatusBadRequest)
+			return
+		}
+
+		errs := make(chan error)
+		s.messagesChan <- SessionMsgWithErrs{
+			SessionID: sessID,
+			Msg:       msg,
+			Errs:      errs,
+		}
+
+		if err := <-errs; err != nil {
+			nErr := fmt.Errorf("failed to handle message: %w", err)
+			s.logError(nErr)
+			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
 	})
 }
 
-// RequestListRoot retrieves a list of available roots from the client.
-// The context controls the request lifecycle and can be used for cancellation.
-func (s SSEServer) RequestListRoot(ctx context.Context) (RootList, error) {
-	return s.srv.listRoots(ctx)
-}
-
-// RequestSampling sends a sampling request to generate an AI model response based on the provided parameters.
-// The context controls the request lifecycle and can be used for cancellation. The params define the sampling
-// configuration including conversation history, model preferences, system prompts, and token limits. It returns
-// a SamplingResult containing the generated response and model information, or an error if the sampling fails
-// or the session is not found.
-func (s SSEServer) RequestSampling(ctx context.Context, params SamplingParams) (SamplingResult, error) {
-	return s.srv.requestSampling(ctx, params)
-}
-
-// Stop gracefully shuts down the SSE server by stopping the underlying MCP server.
-// This will close all active sessions and stop processing events.
-func (s SSEServer) Stop() {
+// Close shuts down the SSE server by closing all internal channels.
+// This terminates all active connections and stops message processing.
+func (s SSEServer) Close() {
+	close(s.sessionsChan)
+	close(s.messagesChan)
+	close(s.errsChan)
 	close(s.closeChan)
-	s.srv.stop()
 }
 
-// Connect establishes a Server-Sent Events (SSE) connection to the configured server endpoint.
-// It initiates the connection, handles the initial handshake, and starts listening for server events.
+// Send delivers a message to the server using an HTTP POST request. The message
+// is marshaled to JSON and sent to the server's message endpoint. The operation
+// can be cancelled via the provided context.
 //
-// The ctx parameter controls the lifecycle of the connection and can be used to cancel it.
+// Returns an error if message marshaling fails, the request cannot be created,
+// or the server returns a non-200 status code.
+func (s *SSEClient) Send(ctx context.Context, msg SessionMsg) error {
+	msgBs, err := json.Marshal(msg.Msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	r := bytes.NewReader(msgBs)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.messageURL, r)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// StartSession initiates a new SSE connection with the server and returns the
+// session ID. It establishes the event stream connection and starts listening
+// for server messages in a separate goroutine.
 //
-// Returns a session ID string that uniquely identifies this connection and must be used for subsequent
-// API calls. Returns an error if the connection cannot be established, the server returns an unexpected
-// status code, or the initial handshake fails.
-func (s SSEClient) Connect(ctx context.Context) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.baseURL, nil)
+// The returned session ID can be used to correlate messages with this specific
+// connection. Returns an error if the connection cannot be established or
+// the server response is invalid.
+func (s *SSEClient) StartSession() (string, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.baseURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	//nolint:bodyclose // The body would be closed when goroutine below is done
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to connect to SSE server: %w", err)
@@ -193,21 +290,20 @@ func (s SSEClient) Connect(ctx context.Context) (string, error) {
 
 	// Read the first SSE event which contains the message URL
 	scanner := bufio.NewScanner(resp.Body)
-	var msgURL string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "endpoint: ") {
-			msgURL = strings.TrimSpace(strings.TrimPrefix(line, "endpoint: "))
+			s.messageURL = strings.TrimSpace(strings.TrimPrefix(line, "endpoint: "))
 			break
 		}
 	}
-	if msgURL == "" {
+	if s.messageURL == "" {
 		resp.Body.Close()
 		return "", fmt.Errorf("failed to read message URL from SSE event")
 	}
 
 	// Parse the session ID from the message URL
-	parsedURL, err := url.Parse(msgURL)
+	parsedURL, err := url.Parse(s.messageURL)
 	if err != nil {
 		resp.Body.Close()
 		return "", fmt.Errorf("invalid message URL: %w", err)
@@ -219,277 +315,90 @@ func (s SSEClient) Connect(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("no session ID in message URL")
 	}
 
-	sw := sseWritter{
-		httpClient: s.httpClient,
-		url:        msgURL,
-		writeLock:  &sync.Mutex{},
-	}
-
-	s.cli.startSession(ctx, sw, sessID)
-
-	initReadyChan := make(chan struct{})
-	errChan := make(chan error)
-
-	go s.initialize(ctx, sessID, initReadyChan, errChan)
-
-	go func() {
-		defer resp.Body.Close()
-
-		newScanner := bufio.NewScanner(resp.Body)
-		for newScanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			line := newScanner.Text()
-			if line == "" {
-				// Skip empty lines
-				continue
-			}
-			var input string
-			if strings.HasPrefix(line, "message: ") {
-				input = strings.TrimSpace(strings.TrimPrefix(line, "message: "))
-			}
-
-			if err := s.cli.handleMsg(bytes.NewReader([]byte(input)), sessID); err != nil {
-				log.Printf("failed to handle SSE event %s: %v", line, err)
-				continue
-			}
-		}
-
-		if newScanner.Err() != nil {
-			if !errors.Is(newScanner.Err(), context.Canceled) {
-				log.Printf("failed to read SSE events: %v", newScanner.Err())
-			}
-		}
-	}()
-
-	select {
-	case err := <-errChan:
-		return "", err
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case <-initReadyChan:
-	}
+	go s.listenMessages(sessID, resp.Body)
 
 	return sessID, nil
 }
 
-// ListPrompts retrieves a paginated list of available prompts from the server.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains optional pagination cursor and progress tracking metadata.
-//
-// Returns a PromptList containing the available prompts and pagination information.
-// Returns an error if the request fails or the session ID is invalid.
-func (s SSEClient) ListPrompts(ctx context.Context, sessionID string, params PromptsListParams) (PromptList, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.listPrompts(ctx, params.Cursor, params.Meta.ProgressToken)
+// SessionMessages returns a receive-only channel that provides incoming messages
+// from the server. Each message includes the session ID, the message content,
+// and an error channel for reporting processing results back to the server.
+func (s *SSEClient) SessionMessages() <-chan SessionMsgWithErrs {
+	return s.messagesChan
 }
 
-// GetPrompt retrieves a specific prompt template by name with the provided arguments.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the prompt name, arguments, and optional progress tracking metadata.
-//
-// Returns the requested Prompt with its full template and metadata.
-// Returns an error if the prompt doesn't exist, the arguments are invalid, or the session ID is invalid.
-func (s SSEClient) GetPrompt(ctx context.Context, sessionID string, params PromptsGetParams) (PromptResult, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.getPrompt(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
+// Errors returns a receive-only channel that provides client-side errors
+// that occur during operation. This includes connection errors, message
+// parsing failures, and other operational errors.
+func (s *SSEClient) Errors() <-chan error {
+	return s.errsChan
 }
 
-// CompletesPrompt requests completion suggestions for a prompt argument from the server.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the prompt name and argument to get completions for.
-//
-// Returns a CompletionResult containing possible completion values and pagination info.
-// Returns an error if the session ID is invalid.
-func (s SSEClient) CompletesPrompt(
-	ctx context.Context,
-	sessionID string,
-	params CompletionCompleteParams,
-) (CompletionResult, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.completesPrompt(ctx, params.Ref.Name, params.Argument)
+// Close shuts down the SSE client by closing all internal channels and
+// terminating the connection to the server. This stops all message processing
+// and releases associated resources.
+func (s *SSEClient) Close() {
+	close(s.errsChan)
+	close(s.messagesChan)
+	close(s.closeChan)
 }
 
-// ListResources retrieves a paginated list of available resources from the server.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains optional pagination cursor and progress tracking metadata.
-//
-// Returns a ResourceList containing the available resources and pagination information.
-// Returns an error if the request fails or the session ID is invalid.
-func (s SSEClient) ListResources(
-	ctx context.Context,
-	sessionID string,
-	params ResourcesListParams,
-) (ResourceList, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.listResources(ctx, params.Cursor, params.Meta.ProgressToken)
-}
+func (s *SSEClient) listenMessages(sessID string, body io.ReadCloser) {
+	defer body.Close()
 
-// ReadResource retrieves the content and metadata of a specific resource by its URI.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the resource URI and optional progress tracking metadata.
-//
-// Returns the requested Resource with its content and metadata.
-// Returns an error if the resource doesn't exist or the session ID is invalid.
-func (s SSEClient) ReadResource(ctx context.Context, sessionID string, params ResourcesReadParams) (Resource, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.readResource(ctx, params.URI, params.Meta.ProgressToken)
-}
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		select {
+		case <-s.closeChan:
+			return
+		default:
+		}
 
-// ListResourceTemplates retrieves all available resource templates from the server.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains optional progress tracking metadata.
-//
-// Returns a slice of ResourceTemplate objects describing the available templates.
-// Returns an error if the request fails or the session ID is invalid.
-func (s SSEClient) ListResourceTemplates(
-	ctx context.Context,
-	sessionID string,
-	params ResourcesTemplatesListParams,
-) ([]ResourceTemplate, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.listResourceTemplates(ctx, params.Meta.ProgressToken)
-}
+		line := scanner.Text()
+		if line == "" {
+			// Skip empty lines
+			continue
+		}
+		var input string
+		if strings.HasPrefix(line, "message: ") {
+			input = strings.TrimSpace(strings.TrimPrefix(line, "message: "))
+		}
 
-// SubscribeResource registers interest in receiving updates for a specific resource.
-// When the resource changes, the server will send notifications via the SSE connection.
-//
-// The ctx parameter controls the lifecycle of the subscription and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the URI of the resource to subscribe to.
-//
-// Returns an error if the subscription fails, the resource doesn't exist, or the session ID is invalid.
-func (s SSEClient) SubscribeResource(ctx context.Context, sessionID string, params ResourcesSubscribeParams) error {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.subscribeResource(ctx, params.URI)
-}
+		var msg JSONRPCMessage
+		if err := json.Unmarshal([]byte(input), &msg); err != nil {
+			s.logError(fmt.Errorf("failed to unmarshal message: %w", err))
+			continue
+		}
 
-// UnsubscribeResource cancels an existing subscription for updates to a specific resource.
-// This removes the registration previously created by SubscribeResource, stopping any further
-// notifications for that resource via the SSE connection.
-//
-// The ctx parameter controls the lifecycle of the unsubscribe request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the URI of the resource to unsubscribe from.
-//
-// Returns an error if the unsubscription fails, the resource doesn't exist, or the session ID is invalid.
-func (s SSEClient) UnsubscribeResource(ctx context.Context, sessionID string, params ResourcesSubscribeParams) error {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.unsubscribeResource(ctx, params.URI)
-}
+		errs := make(chan error)
+		s.messagesChan <- SessionMsgWithErrs{
+			SessionID: sessID,
+			Msg:       msg,
+			Errs:      errs,
+		}
 
-// CompletesResourceTemplate provides completion suggestions for a resource template argument.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the template URI and argument to get completions for.
-//
-// Returns a CompletionResult containing possible completion values and pagination info.
-// Returns an error if the session ID is invalid.
-func (s SSEClient) CompletesResourceTemplate(
-	ctx context.Context,
-	sessionID string,
-	params CompletionCompleteParams,
-) (CompletionResult, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.completesResourceTemplate(ctx, params.Ref.Name, params.Argument)
-}
-
-// ListTools retrieves a paginated list of available tools from the server.
-//
-// The ctx parameter controls the lifecycle of the request and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains optional pagination cursor and progress tracking metadata.
-//
-// Returns a ToolList containing the available tools and pagination information.
-// Returns an error if the request fails or the session ID is invalid.
-func (s SSEClient) ListTools(ctx context.Context, sessionID string, params ToolsListParams) (ToolList, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.listTools(ctx, params.Cursor, params.Meta.ProgressToken)
-}
-
-// CallTool executes a specific tool with the provided arguments.
-//
-// The ctx parameter controls the lifecycle of the tool execution and can be used to cancel it.
-// The sessionID parameter must be a valid session ID obtained from Connect().
-// The params parameter contains the tool name, arguments, and optional progress tracking metadata.
-//
-// Returns a ToolResult containing the execution outcome and any output data.
-// Returns an error if the tool doesn't exist, the arguments are invalid, or the session ID is invalid.
-func (s SSEClient) CallTool(ctx context.Context, sessionID string, params ToolsCallParams) (ToolResult, error) {
-	ctx = ctxWithSessionID(ctx, sessionID)
-	return s.cli.callTool(ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
-}
-
-// SetLogLevel sets the minimum severity level for emitted log messages.
-func (s SSEClient) SetLogLevel(level LogLevel) error {
-	return s.cli.setLogLevel(level)
-}
-
-// Close closes the SSEClient and stops all the sessions.
-func (s SSEClient) Close() {
-	s.cli.stop()
-}
-
-func (s SSEServer) flush(sessID string) {
-	s.flushLock.Lock()
-	defer s.flushLock.Unlock()
-
-	// Flush the writer after each message
-	sw, ok := s.writers.Load(sessID)
-	if !ok {
-		return
+		if err := <-errs; err != nil {
+			s.logError(fmt.Errorf("failed to handle message: %w", err))
+		}
 	}
-	f, ok := sw.(http.Flusher)
-	if ok {
-		f.Flush()
+
+	if scanner.Err() != nil {
+		if !errors.Is(scanner.Err(), context.Canceled) {
+			s.logError(fmt.Errorf("failed to read SSE events: %w", scanner.Err()))
+		}
 	}
 }
 
-func (s SSEClient) initialize(ctx context.Context, sessID string, readyChan chan<- struct{}, errChan chan<- error) {
-	defer close(readyChan)
-	ctx = ctxWithSessionID(ctx, sessID)
-	if err := s.cli.initialize(ctx); err != nil {
-		errChan <- fmt.Errorf("failed to initialize session: %w", err)
-		return
+func (s *SSEServer) logError(err error) {
+	select {
+	case s.errsChan <- err:
+	default:
 	}
 }
 
-func (s sseWritter) Write(p []byte) (int, error) {
-	s.writeLock.Lock()
-	defer s.writeLock.Unlock()
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, s.url, bytes.NewReader(p))
-	if err != nil {
-		return 0, err
+func (s *SSEClient) logError(err error) {
+	select {
+	case s.errsChan <- err:
+	default:
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	return len(p), nil
 }

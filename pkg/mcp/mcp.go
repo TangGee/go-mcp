@@ -2,9 +2,74 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 
 	"github.com/qri-io/jsonschema"
 )
+
+// Transport provides the core communication interface between MCP servers and clients.
+// It handles bidirectional message passing with support for multiple concurrent sessions.
+// Implementations must ensure thread-safety and proper handling of context cancellation.
+type Transport interface {
+	// Send transmits a message to either server or client within a specific session.
+	// The context controls the send operation's lifetime - implementations must respect
+	// context cancellation and return appropriate errors.
+	//
+	// The SessionMsg parameter contains both the target session ID and the message payload.
+	// Implementations should maintain session isolation to prevent cross-session interference.
+	Send(ctx context.Context, msg SessionMsg) error
+
+	// SessionMessages returns a receive-only channel that emits incoming messages from
+	// connected peers. Each message includes the originating session ID, the message
+	// content, and an error channel for reporting processing outcomes.
+	//
+	// The returned channel remains open for the lifetime of the transport. Implementations
+	// must ensure the channel is properly closed when the transport is closed.
+	//
+	// The error channel in SessionMsgWithErrs must be handled by receiving exactly one
+	// error value, even if errors are not relevant to the implementation.
+	SessionMessages() <-chan SessionMsgWithErrs
+
+	// Close terminates the transport, releasing any held resources and closing
+	// all active sessions. After Close is called, no new messages can be sent
+	// or received, and all pending operations should be cancelled.
+	Close()
+}
+
+// ServerTransport extends the base Transport interface with server-specific
+// functionality for accepting and managing client sessions. It provides the
+// server-side communication layer in the MCP protocol.
+type ServerTransport interface {
+	Transport
+
+	// Sessions returns a receive-only channel that emits new client session
+	// connections. Each SessionCtx contains both the unique session identifier
+	// and a context that is cancelled when the session ends.
+	//
+	// The implementation must:
+	// - Maintain session ordering and deliver all sessions without drops
+	// - Keep the channel open for the transport's lifetime
+	// - Close the context when its associated session terminates
+	// - Support concurrent access from multiple goroutines
+	Sessions() <-chan SessionCtx
+}
+
+// ClientTransport extends the base Transport interface with client-specific
+// functionality for initiating sessions with servers. It provides the
+// client-side communication layer in the MCP protocol.
+type ClientTransport interface {
+	Transport
+
+	// StartSession initiates a new session with the server and returns the
+	// assigned session identifier. The implementation may cache the session ID
+	// internally to route subsequent messages.
+	//
+	// Returns an error if the session cannot be established. Implementations
+	// should provide meaningful error information to help diagnose connection
+	// issues.
+	StartSession() (string, error)
+}
 
 // Server interfaces
 
@@ -14,16 +79,17 @@ import (
 type PromptServer interface {
 	// ListPrompts returns a paginated list of available prompts.
 	// Returns error if operation fails or context is cancelled.
-	ListPrompts(ctx context.Context, params PromptsListParams) (PromptList, error)
+	ListPrompts(ctx context.Context, params PromptsListParams, requestClient RequestClientFunc) (PromptList, error)
 
 	// GetPrompt retrieves a specific prompt template by name with the given arguments.
 	// Returns error if prompt not found, arguments are invalid, or context is cancelled.
-	GetPrompt(ctx context.Context, params PromptsGetParams) (PromptResult, error)
+	GetPrompt(ctx context.Context, params PromptsGetParams, requestClient RequestClientFunc) (PromptResult, error)
 
 	// CompletesPrompt provides completion suggestions for a prompt argument.
 	// Used to implement interactive argument completion in clients.
 	// Returns error if prompt doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesPrompt(ctx context.Context, params CompletionCompleteParams) (CompletionResult, error)
+	CompletesPrompt(ctx context.Context, params CompletionCompleteParams,
+		requestClient RequestClientFunc) (CompletionResult, error)
 }
 
 // PromptListUpdater provides an interface for monitoring changes to the available prompts list.
@@ -49,19 +115,21 @@ type PromptListUpdater interface {
 type ResourceServer interface {
 	// ListResources returns a paginated list of available resources.
 	// Returns error if operation fails or context is cancelled.
-	ListResources(ctx context.Context, params ResourcesListParams) (ResourceList, error)
+	ListResources(ctx context.Context, params ResourcesListParams, requestClient RequestClientFunc) (ResourceList, error)
 
 	// ReadResource retrieves a specific resource by its URI.
 	// Returns error if resource not found, cannot be read, or context is cancelled.
-	ReadResource(ctx context.Context, params ResourcesReadParams) (Resource, error)
+	ReadResource(ctx context.Context, params ResourcesReadParams, requestClient RequestClientFunc) (Resource, error)
 
 	// ListResourceTemplates returns all available resource templates.
 	// Returns error if templates cannot be retrieved or context is cancelled.
-	ListResourceTemplates(ctx context.Context, params ResourcesTemplatesListParams) ([]ResourceTemplate, error)
+	ListResourceTemplates(ctx context.Context, params ResourcesTemplatesListParams,
+		requestClient RequestClientFunc) ([]ResourceTemplate, error)
 
 	// CompletesResourceTemplate provides completion suggestions for a resource template argument.
 	// Returns error if template doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesResourceTemplate(ctx context.Context, params CompletionCompleteParams) (CompletionResult, error)
+	CompletesResourceTemplate(ctx context.Context, params CompletionCompleteParams,
+		requestClient RequestClientFunc) (CompletionResult, error)
 
 	// SubscribeResource registers interest in a specific resource URI.
 	SubscribeResource(params ResourcesSubscribeParams)
@@ -107,11 +175,11 @@ type ResourceSubscribedUpdater interface {
 type ToolServer interface {
 	// ListTools returns a paginated list of available tools.
 	// Returns error if operation fails or context is cancelled.
-	ListTools(ctx context.Context, params ToolsListParams) (ToolList, error)
+	ListTools(ctx context.Context, params ToolsListParams, requestClient RequestClientFunc) (ToolList, error)
 
 	// CallTool executes a specific tool with the given arguments.
 	// Returns error if tool not found, arguments are invalid, execution fails, or context is cancelled.
-	CallTool(ctx context.Context, params ToolsCallParams) (ToolResult, error)
+	CallTool(ctx context.Context, params ToolsCallParams, requestClient RequestClientFunc) (ToolResult, error)
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
@@ -239,6 +307,92 @@ type LogReceiver interface {
 	// OnLog is called when a log message is received from the server.
 	OnLog(params LogParams)
 }
+
+// JSONRPCMessage represents a JSON-RPC 2.0 message used for communication in the MCP protocol.
+// It can represent either a request, response, or notification depending on which fields are populated:
+//   - Request: JSONRPC, ID, Method, and Params are set
+//   - Response: JSONRPC, ID, and either Result or Error are set
+//   - Notification: JSONRPC and Method are set (no ID)
+type JSONRPCMessage struct {
+	// JSONRPC must always be "2.0" per the JSON-RPC specification
+	JSONRPC string `json:"jsonrpc"`
+	// ID uniquely identifies request-response pairs and must be a string or number
+	ID MustString `json:"id,omitempty"`
+	// Method contains the RPC method name for requests and notifications
+	Method string `json:"method,omitempty"`
+	// Params contains the parameters for the method call as a raw JSON message
+	Params json.RawMessage `json:"params,omitempty"`
+	// Result contains the successful response data as a raw JSON message
+	Result json.RawMessage `json:"result,omitempty"`
+	// Error contains error details if the request failed
+	Error *JSONRPCError `json:"error,omitempty"`
+}
+
+// JSONRPCError represents an error response in the JSON-RPC 2.0 protocol.
+// It follows the standard error object format defined in the JSON-RPC 2.0 specification.
+type JSONRPCError struct {
+	// Code indicates the error type that occurred.
+	// Must use standard JSON-RPC error codes or custom codes outside the reserved range.
+	Code int `json:"code"`
+
+	// Message provides a short description of the error.
+	// Should be limited to a concise single sentence.
+	Message string `json:"message"`
+
+	// Data contains additional information about the error.
+	// The value is unstructured and may be omitted.
+	Data map[string]any `json:"data,omitempty"`
+}
+
+// SessionCtx represents a client session context in the MCP protocol.
+// It combines a context.Context for lifecycle management with a unique session identifier.
+type SessionCtx struct {
+	// Ctx controls the session lifecycle. It is cancelled when the session ends.
+	Ctx context.Context
+
+	// ID uniquely identifies the session within the transport.
+	// Must remain constant for the session duration.
+	ID string
+}
+
+// SessionMsg represents a message associated with a specific session.
+// It combines the session identifier with the JSON-RPC message payload.
+type SessionMsg struct {
+	// SessionID identifies which session this message belongs to.
+	// Must match an active session ID in the transport.
+	SessionID string
+
+	// Msg contains the JSON-RPC message payload.
+	// Can be a request, response, or notification.
+	Msg JSONRPCMessage
+}
+
+// SessionMsgWithErrs extends SessionMsg with an error reporting channel.
+// It enables asynchronous error handling for message processing operations.
+type SessionMsgWithErrs struct {
+	// SessionID identifies which session this message belongs to.
+	// Must match an active session ID in the transport.
+	SessionID string
+
+	// Msg contains the JSON-RPC message payload.
+	// Can be a request, response, or notification.
+	Msg JSONRPCMessage
+
+	// Errs receives exactly one error value after message processing completes.
+	// A nil error indicates successful processing.
+	Errs chan<- error
+}
+
+// Info contains metadata about a server or client instance including its name and version.
+type Info struct {
+	Name    string `json:"name"`
+	Version string `json:"version"`
+}
+
+// MustString is a type that enforces string representation for fields that can be either string or integer
+// in the protocol specification, such as request IDs and progress tokens. It handles automatic conversion
+// during JSON marshaling/unmarshaling.
+type MustString string
 
 // PromptsListParams contains parameters for listing available prompts.
 type PromptsListParams struct {
@@ -420,6 +574,46 @@ type ToolResult struct {
 	IsError bool      `json:"isError"`
 }
 
+// CompletionCompleteParams contains parameters for requesting completion suggestions.
+// It includes a reference to what is being completed (e.g. a prompt or resource template)
+// and the specific argument that needs completion suggestions.
+type CompletionCompleteParams struct {
+	// Ref identifies what is being completed (e.g. prompt, resource template)
+	Ref CompletionCompleteRef `json:"ref"`
+	// Argument specifies which argument needs completion suggestions
+	Argument CompletionArgument `json:"argument"`
+}
+
+// CompletionCompleteRef identifies what is being completed in a completion request.
+// Type must be one of:
+//   - "ref/prompt": Completing a prompt argument, Name field must be set to prompt name
+//   - "ref/resource": Completing a resource template argument, URI field must be set to template URI
+type CompletionCompleteRef struct {
+	// Type specifies what kind of completion is being requested.
+	// Must be either "ref/prompt" or "ref/resource".
+	Type string `json:"type"`
+	// Name contains the prompt name when Type is "ref/prompt".
+	Name string `json:"name,omitempty"`
+	// URI contains the resource template URI when Type is "ref/resource".
+	URI string `json:"uri,omitempty"`
+}
+
+// CompletionArgument defines the structure for arguments passed in completion requests,
+// containing the argument name and its corresponding value.
+type CompletionArgument struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// CompletionResult contains the response data for a completion request, including
+// possible completion values and whether more completions are available.
+type CompletionResult struct {
+	Completion struct {
+		Values  []string `json:"values"`
+		HasMore bool     `json:"hasMore"`
+	} `json:"completion"`
+}
+
 // ProgressParams represents the progress status of a long-running operation.
 type ProgressParams struct {
 	// ProgressToken uniquely identifies the operation this progress update relates to
@@ -450,6 +644,14 @@ type LogData struct {
 
 // LogLevel represents the severity level of log messages.
 type LogLevel int
+
+// ParamsMeta contains optional metadata that can be included with request parameters.
+// It is used to enable features like progress tracking for long-running operations.
+type ParamsMeta struct {
+	// ProgressToken uniquely identifies an operation for progress tracking.
+	// When provided, the server can emit progress updates via ProgressReporter.
+	ProgressToken MustString `json:"progressToken"`
+}
 
 // RootList represents a collection of root resources in the system.
 // Contains:
@@ -532,6 +734,174 @@ type SamplingResult struct {
 	StopReason string          `json:"stopReason"`
 }
 
+// Content represents a message content with its type.
+type Content struct {
+	Type ContentType `json:"type"`
+
+	Text string `json:"text,omitempty"`
+
+	Data     string `json:"data,omitempty"`
+	MimeType string `json:"mimeType,omitempty"`
+
+	Resource *Resource `json:"resource,omitempty"`
+}
+
+// ContentType represents the type of content in messages.
+type ContentType string
+
+// RequestClientFunc is a function type that handles JSON-RPC message communication between client and server.
+// It takes a JSON-RPC request message as input and returns the corresponding response message.
+//
+// The function is used by server implementations to send requests to clients and receive responses
+// during method handling. For example, when a server needs to request additional information from
+// a client while processing a method call.
+//
+// Parameters:
+//   - msg: The JSON-RPC request message to send to the client
+//
+// Returns:
+//   - JSONRPCMessage: The response message from the client
+//   - error: Any error that occurred during the request-response cycle
+//
+// The implementation must handle timeouts, connection errors, and invalid responses appropriately.
+// It should respect the JSON-RPC 2.0 specification for error handling and message formatting.
+type RequestClientFunc func(msg JSONRPCMessage) (JSONRPCMessage, error)
+
+// ServerCapabilities represents server capabilities.
+type ServerCapabilities struct {
+	Prompts   *PromptsCapability   `json:"prompts,omitempty"`
+	Resources *ResourcesCapability `json:"resources,omitempty"`
+	Tools     *ToolsCapability     `json:"tools,omitempty"`
+	Logging   *LoggingCapability   `json:"logging,omitempty"`
+}
+
+// ClientCapabilities represents client capabilities.
+type ClientCapabilities struct {
+	Roots    *RootsCapability    `json:"roots,omitempty"`
+	Sampling *SamplingCapability `json:"sampling,omitempty"`
+}
+
+// PromptsCapability represents prompts-specific capabilities.
+type PromptsCapability struct {
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// ResourcesCapability represents resources-specific capabilities.
+type ResourcesCapability struct {
+	Subscribe   bool `json:"subscribe,omitempty"`
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// ToolsCapability represents tools-specific capabilities.
+type ToolsCapability struct {
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// LoggingCapability represents logging-specific capabilities.
+type LoggingCapability struct{}
+
+// RootsCapability represents roots-specific capabilities.
+type RootsCapability struct {
+	ListChanged bool `json:"listChanged,omitempty"`
+}
+
+// SamplingCapability represents sampling-specific capabilities.
+type SamplingCapability struct{}
+
+type initializeParams struct {
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    ClientCapabilities `json:"capabilities"`
+	ClientInfo      Info               `json:"clientInfo"`
+}
+
+type initializeResult struct {
+	ProtocolVersion string             `json:"protocolVersion"`
+	Capabilities    ServerCapabilities `json:"capabilities"`
+	ServerInfo      Info               `json:"serverInfo"`
+}
+
+type notificationsCancelledParams struct {
+	RequestID string `json:"requestId"`
+	Reason    string `json:"reason"`
+}
+
+type notificationsResourcesUpdatedParams struct {
+	URI string `json:"uri"`
+}
+
+const (
+	// JSONRPCVersion specifies the JSON-RPC protocol version used for communication.
+	JSONRPCVersion = "2.0"
+
+	// MethodPromptsList is the method name for retrieving a list of available prompts.
+	MethodPromptsList = "prompts/list"
+	// MethodPromptsGet is the method name for retrieving a specific prompt by identifier.
+	MethodPromptsGet = "prompts/get"
+
+	// MethodResourcesList is the method name for listing available resources.
+	MethodResourcesList = "resources/list"
+	// MethodResourcesRead is the method name for reading the content of a specific resource.
+	MethodResourcesRead = "resources/read"
+	// MethodResourcesTemplatesList is the method name for listing available resource templates.
+	MethodResourcesTemplatesList = "resources/templates/list"
+	// MethodResourcesSubscribe is the method name for subscribing to resource updates.
+	MethodResourcesSubscribe = "resources/subscribe"
+	// MethodResourcesUnsubscribe is the method name for unsubscribing from resource updates.
+	MethodResourcesUnsubscribe = "resources/unsubscribe"
+
+	// MethodToolsList is the method name for retrieving a list of available tools.
+	MethodToolsList = "tools/list"
+	// MethodToolsCall is the method name for invoking a specific tool.
+	MethodToolsCall = "tools/call"
+
+	// MethodRootsList is the method name for retrieving a list of root resources.
+	MethodRootsList = "roots/list"
+	// MethodSamplingCreateMessage is the method name for creating a new sampling message.
+	MethodSamplingCreateMessage = "sampling/createMessage"
+
+	// MethodCompletionComplete is the method name for requesting completion suggestions.
+	MethodCompletionComplete = "completion/complete"
+
+	// MethodLoggingSetLevel is the method name for setting the minimum severity level for emitted log messages.
+	MethodLoggingSetLevel = "logging/setLevel"
+
+	// CompletionRefPrompt is used in CompletionCompleteRef.Type for prompt argument completion.
+	CompletionRefPrompt = "ref/prompt"
+	// CompletionRefResource is used in CompletionCompleteRef.Type for resource template argument completion.
+	CompletionRefResource = "ref/resource"
+
+	protocolVersion = "2024-11-05"
+
+	errMsgInvalidJSON                    = "Invalid json"
+	errMsgUnsupportedProtocolVersion     = "Unsupported protocol version"
+	errMsgInsufficientClientCapabilities = "Insufficient client capabilities"
+	errMsgInternalError                  = "Internal error"
+	errMsgWriteTimeout                   = "Write timeout"
+	errMsgReadTimeout                    = "Read timeout"
+
+	methodPing       = "ping"
+	methodInitialize = "initialize"
+
+	methodNotificationsInitialized          = "notifications/initialized"
+	methodNotificationsCancelled            = "notifications/cancelled"
+	methodNotificationsPromptsListChanged   = "notifications/prompts/list_changed"
+	methodNotificationsResourcesListChanged = "notifications/resources/list_changed"
+	methodNotificationsResourcesUpdated     = "notifications/resources/updated"
+	methodNotificationsToolsListChanged     = "notifications/tools/list_changed"
+	methodNotificationsProgress             = "notifications/progress"
+	methodNotificationsMessage              = "notifications/message"
+
+	methodNotificationsRootsListChanged = "notifications/roots/list_changed"
+
+	userCancelledReason = "User requested cancellation"
+
+	jsonRPCParseErrorCode     = -32700
+	jsonRPCInvalidRequestCode = -32600
+	jsonRPCMethodNotFoundCode = -32601
+	jsonRPCInvalidParamsCode  = -32602
+	jsonRPCInternalErrorCode  = -32603
+)
+
 // PromptRole represents the role in a conversation (user or assistant).
 const (
 	PromptRoleUser      PromptRole = "user"
@@ -549,3 +919,42 @@ const (
 	LogLevelAlert
 	LogLevelEmergency
 )
+
+// ContentType represents the type of content in messages.
+const (
+	ContentTypeText     ContentType = "text"
+	ContentTypeImage    ContentType = "image"
+	ContentTypeResource ContentType = "resource"
+)
+
+// UnmarshalJSON implements json.Unmarshaler to convert JSON data into MustString,
+// handling both string and numeric input formats.
+func (m *MustString) UnmarshalJSON(data []byte) error {
+	var v any
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+
+	switch v := v.(type) {
+	case string:
+		*m = MustString(v)
+	case float64:
+		*m = MustString(fmt.Sprintf("%d", int(v)))
+	case int:
+		*m = MustString(fmt.Sprintf("%d", v))
+	default:
+		return fmt.Errorf("invalid type: %T", v)
+	}
+
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler to convert MustString into its JSON representation,
+// always encoding as a string value.
+func (m MustString) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(m))
+}
+
+func (j JSONRPCError) Error() string {
+	return fmt.Sprintf("request error, code: %d, message: %s, data %v", j.Code, j.Message, j.Data)
+}
