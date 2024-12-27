@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## 0.2.0 - 2024-12-27
+
+This release introduces a major architectural refactor centered around the new `Transport` interface and `Client` struct. The changes simplify the client architecture by moving from multi-session to single-session management, while providing a more flexible foundation for MCP implementations. The introduction of specialized `ServerTransport` and `ClientTransport` interfaces has enabled unified transport implementations and more consistent server implementations. Notable consolidations include merging separate StdIO implementations into a unified struct and relocating request functions from transport-specific clients to the main `Client` struct.
 
 ### Added
 
