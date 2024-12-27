@@ -14,7 +14,7 @@ import (
 func TestInitialize(t *testing.T) {
 	type testCase struct {
 		name              string
-		server            func(mcp.ServerTransport) mcp.Server
+		server            func() mcp.Server
 		serverOptions     []mcp.ServerOption
 		clientOptions     []mcp.ClientOption
 		serverRequirement mcp.ServerRequirement
@@ -24,10 +24,8 @@ func TestInitialize(t *testing.T) {
 	testCases := []testCase{
 		{
 			name: "success with no capabilities",
-			server: func(transport mcp.ServerTransport) mcp.Server {
-				return &mockServer{
-					transport: transport,
-				}
+			server: func() mcp.Server {
+				return &mockServer{}
 			},
 			serverOptions: []mcp.ServerOption{},
 			clientOptions: []mcp.ClientOption{},
@@ -40,9 +38,8 @@ func TestInitialize(t *testing.T) {
 		},
 		{
 			name: "success with full capabilities",
-			server: func(transport mcp.ServerTransport) mcp.Server {
+			server: func() mcp.Server {
 				return &mockServer{
-					transport:              transport,
 					requireRootsListClient: true,
 					requireSamplingClient:  true,
 				}
@@ -77,9 +74,8 @@ func TestInitialize(t *testing.T) {
 		},
 		{
 			name: "fail insufficient client capabilities",
-			server: func(transport mcp.ServerTransport) mcp.Server {
+			server: func() mcp.Server {
 				return &mockServer{
-					transport:              transport,
 					requireRootsListClient: true,
 				}
 			},
@@ -94,10 +90,8 @@ func TestInitialize(t *testing.T) {
 		},
 		{
 			name: "fail insufficient server capabilities",
-			server: func(transport mcp.ServerTransport) mcp.Server {
-				return &mockServer{
-					transport: transport,
-				}
+			server: func() mcp.Server {
+				return &mockServer{}
 			},
 			serverOptions: []mcp.ServerOption{
 				mcp.WithPromptServer(mockPromptServer{}),
@@ -134,10 +128,10 @@ func TestInitialize(t *testing.T) {
 				ctx, cancel := context.WithCancel(context.Background())
 				defer cancel()
 
-				srv := tc.server(serverTransport)
+				srv := tc.server()
 				errsChan := make(chan error)
 
-				go mcp.Serve(ctx, srv, errsChan, tc.serverOptions...)
+				go mcp.Serve(ctx, srv, serverTransport, errsChan, tc.serverOptions...)
 
 				cliInfo := mcp.Info{
 					Name:    "test-client",

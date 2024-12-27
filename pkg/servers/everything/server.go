@@ -14,7 +14,6 @@ import (
 // multi-level logging through dedicated channels. While not intended for production use,
 // it serves as both a reference implementation and testing tool for MCP protocol features.
 type Server struct {
-	transport           mcp.ServerTransport
 	resourceSubscribers *sync.Map // map[resourceURI]struct{}
 
 	logLevel mcp.LogLevel
@@ -26,15 +25,17 @@ type Server struct {
 	doneChan chan struct{}
 }
 
-// NewServer creates and initializes a new Server instance with the provided transport layer.
-// It sets up internal channels for resource updates, progress tracking, and logging, and
-// starts a background goroutine to simulate resource updates.
+// NewServer creates a new test server that implements all MCP protocol features. It initializes
+// internal state and starts background tasks for simulating resource updates.
 //
-// The server begins with debug-level logging enabled and can handle multiple concurrent
-// resource subscriptions. The caller should invoke Close when the server is no longer needed.
-func NewServer(transport mcp.ServerTransport) *Server {
+// The server starts with debug-level logging and supports concurrent resource subscriptions
+// through thread-safe operations. Resource updates are simulated via background goroutines
+// to facilitate testing of client subscription handling.
+//
+// Callers must call Close when finished to properly cleanup background tasks and release
+// resources.
+func NewServer() *Server {
 	s := &Server{
-		transport:              transport,
 		resourceSubscribers:    new(sync.Map),
 		logLevel:               mcp.LogLevelDebug,
 		updateResourceSubsChan: make(chan string),
@@ -64,11 +65,6 @@ func (s Server) RequireRootsListClient() bool {
 // RequireSamplingClient implements mcp.Server interface.
 func (s Server) RequireSamplingClient() bool {
 	return true
-}
-
-// Transport implements mcp.Server interface.
-func (s Server) Transport() mcp.ServerTransport {
-	return s.transport
 }
 
 // Close closes the SSEServer and stops all background tasks.

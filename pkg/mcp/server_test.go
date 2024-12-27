@@ -10,7 +10,6 @@ import (
 type mockServer struct {
 	requireRootsListClient bool
 	requireSamplingClient  bool
-	transport              mcp.ServerTransport
 }
 
 type mockPromptServer struct{}
@@ -41,10 +40,6 @@ func (m mockServer) RequireRootsListClient() bool {
 
 func (m mockServer) RequireSamplingClient() bool {
 	return m.requireSamplingClient
-}
-
-func (m mockServer) Transport() mcp.ServerTransport {
-	return m.transport
 }
 
 func (m mockPromptServer) ListPrompts(

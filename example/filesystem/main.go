@@ -33,7 +33,7 @@ func main() {
 	go srvIO.Start()
 	go cliIO.Start()
 
-	srv, err := filesystem.NewServer(srvIO, *path)
+	srv, err := filesystem.NewServer(*path)
 	if err != nil {
 		fmt.Println("Error: failed to create filesystem server:", err)
 		os.Exit(1)
@@ -42,7 +42,7 @@ func main() {
 	errsChan := make(chan error)
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 
-	go mcp.Serve(srvCtx, srv, errsChan,
+	go mcp.Serve(srvCtx, srv, srvIO, errsChan,
 		mcp.WithServerPingInterval(30*time.Second),
 		mcp.WithToolServer(srv),
 	)

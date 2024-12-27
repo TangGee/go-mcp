@@ -17,19 +17,16 @@ import (
 // It implements both the mcp.Server and mcp.ToolServer interfaces to provide filesystem
 // functionality through the MCP protocol.
 type Server struct {
-	transport mcp.ServerTransport
-	rootPath  string
+	rootPath string
 }
 
-// NewServer creates a new filesystem MCP server with the given transport and root directory.
-// The root directory path defines the boundary of accessible filesystem operations.
+// NewServer creates a new filesystem MCP server that provides access to files under the specified root directory.
 //
-// The transport parameter specifies the MCP communication transport to use. The root
-// parameter must be a valid directory path that exists and is accessible. All filesystem
-// operations will be restricted to this directory and its subdirectories.
+// The server validates that the root path exists and is an accessible directory. All filesystem operations
+// are restricted to this directory and its subdirectories for security.
 //
-// Returns an error if the root path does not exist, is not a directory, or cannot be accessed.
-func NewServer(transport mcp.ServerTransport, root string) (Server, error) {
+// It returns an error if the root path does not exist, is not a directory, or cannot be accessed.
+func NewServer(root string) (Server, error) {
 	info, err := os.Stat(filepath.Clean(root))
 	if err != nil {
 		return Server{}, fmt.Errorf("failed to stat root directory: %w", err)
@@ -39,8 +36,7 @@ func NewServer(transport mcp.ServerTransport, root string) (Server, error) {
 	}
 
 	s := Server{
-		transport: transport,
-		rootPath:  root,
+		rootPath: root,
 	}
 
 	return s, nil
@@ -62,11 +58,6 @@ func (s Server) RequireRootsListClient() bool {
 // RequireSamplingClient implements mcp.Server interface.
 func (s Server) RequireSamplingClient() bool {
 	return false
-}
-
-// Transport implements mcp.Server interface.
-func (s Server) Transport() mcp.ServerTransport {
-	return s.transport
 }
 
 // ListTools implements mcp.ToolServer interface.

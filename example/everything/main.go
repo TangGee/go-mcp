@@ -15,7 +15,7 @@ var port = "8080"
 
 func main() {
 	sse := mcp.NewSSEServer()
-	server := everything.NewServer(sse)
+	server := everything.NewServer()
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),
@@ -36,7 +36,7 @@ func main() {
 	errsChan := make(chan error)
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 
-	go mcp.Serve(srvCtx, server, errsChan,
+	go mcp.Serve(srvCtx, server, sse, errsChan,
 		mcp.WithServerPingInterval(30*time.Second),
 		mcp.WithPromptServer(server),
 		mcp.WithResourceServer(server),

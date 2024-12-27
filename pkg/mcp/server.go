@@ -16,7 +16,6 @@ type Server interface {
 	Info() Info
 	RequireRootsListClient() bool
 	RequireSamplingClient() bool
-	Transport() ServerTransport
 }
 
 // ServerOption represents the options for the server.
@@ -97,19 +96,39 @@ var (
 	errSessionNotFound = errors.New("session not found")
 )
 
-// Serve starts a Model Context Protocol server and manages its lifecycle. It initializes
-// the server with the provided configuration, starts handling client connections and
-// protocol messages, and continues running until the context is cancelled.
+// Serve starts a Model Context Protocol (MCP) server and manages its lifecycle. It handles
+// client connections, protocol messages, and server capabilities according to the MCP specification.
 //
-// The server parameter implements the Server interface which defines the core MCP
-// capabilities. The errsChan receives any errors that occur during server operation.
-// Optional ServerOption values can be provided to customize server behavior like
-// timeouts and handlers.
+// The server parameter must implement the Server interface to define core MCP capabilities
+// like prompts, resources, and tools. The transport parameter specifies how the server
+// communicates with clients (e.g., HTTP, WebSocket, stdio). Errors encountered during
+// server operation are sent to errsChan.
 //
 // Serve blocks until the provided context is cancelled, at which point it performs
 // a graceful shutdown by closing all active sessions and cleaning up resources.
-func Serve(ctx context.Context, server Server, errsChan chan error, options ...ServerOption) {
-	s := newServer(server, errsChan, options...)
+//
+// Example usage:
+//
+//	srv := &MyMCPServer{} // implements Server interface
+//	transport := mcp.NewHTTPTransport(":8080")
+//	errChan := make(chan error, 10)
+//
+//	ctx, cancel := context.WithCancel(context.Background())
+//	defer cancel()
+//
+//	// Start server with custom options
+//	mcp.Serve(ctx, srv, transport, errChan,
+//	    mcp.WithServerWriteTimeout(30*time.Second),
+//	    mcp.WithProgressReporter(myReporter),
+//	)
+func Serve(
+	ctx context.Context,
+	server Server,
+	transport ServerTransport,
+	errsChan chan error,
+	options ...ServerOption,
+) {
+	s := newServer(server, transport, errsChan, options...)
 	s.start()
 
 	<-ctx.Done()
@@ -208,10 +227,10 @@ func WithServerPingInterval(interval time.Duration) ServerOption {
 	}
 }
 
-func newServer(srv Server, errsChan chan error, options ...ServerOption) server {
+func newServer(srv Server, transport ServerTransport, errsChan chan error, options ...ServerOption) server {
 	s := server{
 		info:            srv.Info(),
-		transport:       srv.Transport(),
+		transport:       transport,
 		sessions:        new(sync.Map),
 		progresses:      new(sync.Map),
 		sessionStopChan: make(chan string),
