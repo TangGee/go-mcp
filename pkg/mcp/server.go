@@ -295,7 +295,7 @@ func (s server) start() {
 		go s.listenProgress()
 	}
 
-	s.listenSessions()
+	go s.listenSessions()
 }
 
 func (s server) listenSessions() {
