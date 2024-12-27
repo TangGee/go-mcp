@@ -3,110 +3,58 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
-	"github.com/google/uuid"
 )
 
 type client struct {
-	ctx context.Context
+	cli    *mcp.Client
+	ctx    context.Context
+	cancel context.CancelFunc
 
-	inChan  chan mcp.JSONRPCMessage
-	outChan chan mcp.JSONRPCMessage
+	closeLock *sync.Mutex
+	closed    bool
+	done      chan struct{}
 }
 
-func newClient(ctx context.Context) *client {
-	return &client{
-		ctx:     ctx,
-		inChan:  make(chan mcp.JSONRPCMessage, 5),
-		outChan: make(chan mcp.JSONRPCMessage, 5),
-	}
-}
+func newClient(transport mcp.ClientTransport) client {
+	ctx, cancel := context.WithCancel(context.Background())
 
-func waitStdIOInput(ctx context.Context) (string, error) {
-	inputChan := make(chan string)
-	errsChan := make(chan error)
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			inputChan <- scanner.Text()
-		}
-		if err := scanner.Err(); err != nil {
-			errsChan <- err
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case err := <-errsChan:
-		return "", err
-	case input := <-inputChan:
-		return input, nil
-	}
-}
-
-func (c *client) Info() mcp.Info {
-	return mcp.Info{
+	cli := mcp.NewClient(mcp.Info{
 		Name:    "fileserver-client",
 		Version: "1.0",
+	}, transport, mcp.ServerRequirement{
+		ToolServer: true,
+	})
+
+	return client{
+		cli:       cli,
+		ctx:       ctx,
+		cancel:    cancel,
+		closeLock: new(sync.Mutex),
+		done:      make(chan struct{}),
 	}
 }
 
-func (c *client) RequirePromptServer() bool {
-	return false
-}
+func (c client) run() {
+	defer c.stop()
+	go c.listenInterruptSignal()
 
-func (c *client) RequireResourceServer() bool {
-	return false
-}
-
-func (c *client) RequireToolServer() bool {
-	return true
-}
-
-func (c *client) Read(p []byte) (int, error) {
-	var msg mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return 0, c.ctx.Err()
-	case msg = <-c.inChan:
+	if err := c.cli.Connect(); err != nil {
+		fmt.Printf("failed to connect to server: %v\n", err)
+		return
 	}
 
-	msgBs, _ := json.Marshal(msg)
-	n := copy(p, msgBs)
-	return n, nil
-}
-
-func (c *client) Write(p []byte) (int, error) {
-	var msg mcp.JSONRPCMessage
-	if err := json.Unmarshal(p, &msg); err != nil {
-		return 0, err
-	}
-
-	select {
-	case <-c.ctx.Done():
-		return 0, c.ctx.Err()
-	case c.outChan <- msg:
-	}
-
-	return len(p), nil
-}
-
-func (c *client) run() {
 	for {
-		tools, err := c.listTools()
+		tools, err := c.cli.ListTools(c.ctx, "", "")
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return
-			}
 			fmt.Printf("failed to list tools: %v\n", err)
 			return
 		}
@@ -122,7 +70,7 @@ func (c *client) run() {
 		fmt.Println("- desc <tool number>: Show the description of the tool with the given number, eg. desc 1")
 		fmt.Println("- exit: Exit the program")
 
-		input, err := waitStdIOInput(c.ctx)
+		input, err := c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
@@ -167,7 +115,7 @@ func (c *client) run() {
 
 		fmt.Println("Press enter to continue...")
 
-		_, err = waitStdIOInput(c.ctx)
+		_, err = c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
@@ -178,37 +126,7 @@ func (c *client) run() {
 	}
 }
 
-func (c *client) listTools() (mcp.ToolList, error) {
-	params := mcp.ToolsListParams{}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsList,
-		Params:  paramsBs,
-	}
-
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return mcp.ToolList{}, c.ctx.Err()
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		return mcp.ToolList{}, fmt.Errorf("result error: %w", out.Error)
-	}
-
-	var result mcp.ToolList
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		return mcp.ToolList{}, fmt.Errorf("failed to unmarshal result: %w", err)
-	}
-
-	return result, nil
-}
-
-func (c *client) callTool(tool mcp.Tool) bool {
+func (c client) callTool(tool mcp.Tool) bool {
 	switch tool.Name {
 	case "read_file":
 		return c.callReadFile()
@@ -234,10 +152,10 @@ func (c *client) callTool(tool mcp.Tool) bool {
 	return false
 }
 
-func (c *client) callReadFile() bool {
+func (c client) callReadFile() bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -246,36 +164,13 @@ func (c *client) callReadFile() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "read_file",
-		Arguments: map[string]any{
-			"path": input,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path": input,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "read_file", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -289,10 +184,10 @@ func (c *client) callReadFile() bool {
 	return false
 }
 
-func (c *client) callReadMultipleFiles() bool {
+func (c client) callReadMultipleFiles() bool {
 	fmt.Println("Enter relative path (from the root) to the files (comma-separated):")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -301,36 +196,13 @@ func (c *client) callReadMultipleFiles() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "read_multiple_files",
-		Arguments: map[string]any{
-			"paths": strings.Split(input, ","),
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"paths": strings.Split(input, ","),
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "read_multiple_files", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -348,11 +220,10 @@ func (c *client) callReadMultipleFiles() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
-func (c *client) callWriteFile() bool {
+func (c client) callWriteFile() bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -364,7 +235,7 @@ func (c *client) callWriteFile() bool {
 
 	fmt.Println("Enter content:")
 
-	input, err = waitStdIOInput(c.ctx)
+	input, err = c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -374,37 +245,14 @@ func (c *client) callWriteFile() bool {
 	}
 	content := input
 
-	params := mcp.ToolsCallParams{
-		Name: "write_file",
-		Arguments: map[string]any{
-			"path":    path,
-			"content": content,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path":    path,
+		"content": content,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "write_file", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -418,10 +266,10 @@ func (c *client) callWriteFile() bool {
 	return false
 }
 
-func (c *client) callEditFile() bool {
+func (c client) callEditFile() bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -433,7 +281,7 @@ func (c *client) callEditFile() bool {
 
 	fmt.Println("Enter edits (old text:new text), each separated by a comma:")
 
-	input, err = waitStdIOInput(c.ctx)
+	input, err = c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -470,39 +318,16 @@ func (c *client) callEditFile() bool {
 		})
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "edit_file",
-		Arguments: map[string]any{
-			"path":  path,
-			"edits": edits,
-			// Because the server doesn't support diff yet, dryRun is not supported yet.
-			"dryRun": false,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path":  path,
+		"edits": edits,
+		// Because the server doesn't support diff yet, dryRun is not supported yet.
+		"dryRun": false,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "edit_file", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -516,11 +341,10 @@ func (c *client) callEditFile() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
-func (c *client) callCreateDirectory() bool {
+func (c client) callCreateDirectory() bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -529,36 +353,13 @@ func (c *client) callCreateDirectory() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "create_directory",
-		Arguments: map[string]any{
-			"path": input,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path": input,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "create_directory", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -572,11 +373,10 @@ func (c *client) callCreateDirectory() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
 func (c *client) callListDirectory() bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -585,36 +385,13 @@ func (c *client) callListDirectory() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "list_directory",
-		Arguments: map[string]any{
-			"path": input,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path": input,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "list_directory", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -630,11 +407,10 @@ func (c *client) callListDirectory() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
-func (c *client) callDirectoryTree() bool {
+func (c client) callDirectoryTree() bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -643,36 +419,13 @@ func (c *client) callDirectoryTree() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "directory_tree",
-		Arguments: map[string]any{
-			"path": input,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path": input,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "directory_tree", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -688,11 +441,10 @@ func (c *client) callDirectoryTree() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
-func (c *client) callMoveFile() bool {
+func (c client) callMoveFile() bool {
 	fmt.Println("Enter relative path (from the root) to the source file:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -704,7 +456,7 @@ func (c *client) callMoveFile() bool {
 
 	fmt.Println("Enter relative path (from the root) to the destination file:")
 
-	input, err = waitStdIOInput(c.ctx)
+	input, err = c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -714,37 +466,14 @@ func (c *client) callMoveFile() bool {
 	}
 	destination := input
 
-	params := mcp.ToolsCallParams{
-		Name: "move_file",
-		Arguments: map[string]any{
-			"source":      path,
-			"destination": destination,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"source":      path,
+		"destination": destination,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "move_file", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -758,10 +487,10 @@ func (c *client) callMoveFile() bool {
 	return false
 }
 
-func (c *client) callSearchFiles() bool {
+func (c client) callSearchFiles() bool {
 	fmt.Println("Enter pattern:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -774,7 +503,7 @@ func (c *client) callSearchFiles() bool {
 
 	fmt.Println("Enter exclude patterns (comma-separated):")
 
-	input, err = waitStdIOInput(c.ctx)
+	input, err = c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -793,38 +522,15 @@ func (c *client) callSearchFiles() bool {
 		excludePatterns = append(excludePatterns, excludePattern)
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "search_files",
-		Arguments: map[string]any{
-			"path":            pattern,
-			"pattern":         pattern,
-			"excludePatterns": excludePatterns,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path":            pattern,
+		"pattern":         pattern,
+		"excludePatterns": excludePatterns,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "search_files", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -840,11 +546,10 @@ func (c *client) callSearchFiles() bool {
 	return false
 }
 
-//nolint:dupl // Avoid cleverness.
-func (c *client) callGetFileInfo() bool {
+func (c client) callGetFileInfo() bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
-	input, err := waitStdIOInput(c.ctx)
+	input, err := c.waitStdIOInput()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return false
@@ -853,36 +558,13 @@ func (c *client) callGetFileInfo() bool {
 		return false
 	}
 
-	params := mcp.ToolsCallParams{
-		Name: "get_file_info",
-		Arguments: map[string]any{
-			"path": input,
-		},
-	}
-	paramsBs, _ := json.Marshal(params)
-	c.inChan <- mcp.JSONRPCMessage{
-		JSONRPC: mcp.JSONRPCVersion,
-		ID:      mcp.MustString(uuid.New().String()),
-		Method:  mcp.MethodToolsCall,
-		Params:  paramsBs,
+	args := map[string]any{
+		"path": input,
 	}
 
-	var out mcp.JSONRPCMessage
-
-	select {
-	case <-c.ctx.Done():
-		return true
-	case out = <-c.outChan:
-	}
-
-	if out.Error != nil {
-		fmt.Printf("result error: %v\n", out.Error)
-		return false
-	}
-
-	var result mcp.ToolResult
-	if err := json.Unmarshal(out.Result, &result); err != nil {
-		fmt.Printf("failed to unmarshal result: %v\n", err)
+	result, err := c.cli.CallTool(c.ctx, "get_file_info", args, "")
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
 		return false
 	}
 
@@ -894,4 +576,48 @@ func (c *client) callGetFileInfo() bool {
 	fmt.Println(result.Content[0].Text)
 
 	return false
+}
+
+func (c client) listenInterruptSignal() {
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	<-signalChan
+	c.stop()
+}
+
+func (c client) waitStdIOInput() (string, error) {
+	inputChan := make(chan string)
+	errsChan := make(chan error)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			inputChan <- scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			errsChan <- err
+		}
+	}()
+
+	select {
+	case <-c.ctx.Done():
+		return "", os.ErrClosed
+	case <-c.done:
+		return "", os.ErrClosed
+	case err := <-errsChan:
+		return "", err
+	case input := <-inputChan:
+		return input, nil
+	}
+}
+
+func (c *client) stop() {
+	c.closeLock.Lock()
+	defer c.closeLock.Unlock()
+
+	c.cancel()
+	if !c.closed {
+		close(c.done)
+		c.cli.Close()
+		c.closed = true
+	}
 }
