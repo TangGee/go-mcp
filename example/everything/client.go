@@ -20,7 +20,7 @@ import (
 )
 
 type client struct {
-	cli    mcp.SSEClient
+	cli    *mcp.Client
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -41,9 +41,17 @@ func newClient() *client {
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-
 	url := fmt.Sprintf("%s/sse", baseURL())
-	c.cli = mcp.NewSSEClient(&c, url, http.DefaultClient,
+	sse := mcp.NewSSEClient(url, http.DefaultClient)
+
+	c.cli = mcp.NewClient(mcp.Info{
+		Name:    "everything-client",
+		Version: "1.0",
+	}, sse, mcp.ServerRequirement{
+		PromptServer:   true,
+		ResourceServer: true,
+		ToolServer:     true,
+	},
 		mcp.WithClientPingInterval(30*time.Second),
 		mcp.WithSamplingHandler(&c),
 		mcp.WithResourceSubscribedWatcher(&c),
@@ -52,25 +60,6 @@ func newClient() *client {
 	)
 
 	return &c
-}
-
-func (c *client) Info() mcp.Info {
-	return mcp.Info{
-		Name:    "everything-client",
-		Version: "1.0",
-	}
-}
-
-func (c *client) RequirePromptServer() bool {
-	return true
-}
-
-func (c *client) RequireResourceServer() bool {
-	return true
-}
-
-func (c *client) RequireToolServer() bool {
-	return true
 }
 
 func (c *client) CreateSampleMessage(_ context.Context, params mcp.SamplingParams) (mcp.SamplingResult, error) {
@@ -106,12 +95,11 @@ func (c *client) run() {
 	go c.listenInterruptSignal()
 
 	fmt.Println("Connecting to server...")
-	sessID, err := c.cli.Connect(c.ctx)
-	if err != nil {
+	if err := c.cli.Connect(); err != nil {
 		fmt.Printf("failed to connect to server: %v\n", err)
 		return
 	}
-	fmt.Printf("Connected to server with session ID %s\n", sessID)
+	fmt.Printf("Connected to server")
 
 	for {
 		fmt.Println()
@@ -137,11 +125,11 @@ func (c *client) run() {
 		exit := false
 		switch input {
 		case "1":
-			exit = c.runPrompts(sessID)
+			exit = c.runPrompts()
 		case "2":
-			exit = c.runResources(sessID)
+			exit = c.runResources()
 		case "3":
-			exit = c.runTools(sessID)
+			exit = c.runTools()
 		case "4":
 			c.runNotifications()
 		case "5":
@@ -158,8 +146,8 @@ func (c *client) run() {
 	}
 }
 
-func (c *client) runPrompts(sessID string) bool {
-	listPrompts, err := c.cli.ListPrompts(c.ctx, sessID, mcp.PromptsListParams{})
+func (c *client) runPrompts() bool {
+	listPrompts, err := c.cli.ListPrompts(c.ctx, "", "")
 	if err != nil {
 		log.Printf("failed to list prompts: %v", err)
 		return true
@@ -203,13 +191,13 @@ func (c *client) runPrompts(sessID string) bool {
 	}
 	if prompt.Name == "complex-prompt" {
 		var exit bool
-		params, exit = c.runComplexPrompt(sessID)
+		params, exit = c.runComplexPrompt()
 		if exit {
 			return true
 		}
 	}
 
-	pr, err := c.cli.GetPrompt(c.ctx, sessID, params)
+	pr, err := c.cli.GetPrompt(c.ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
 	if err != nil {
 		fmt.Printf("Failed to get prompt: %v\n", err)
 		return false
@@ -247,15 +235,15 @@ func (c *client) runPrompts(sessID string) bool {
 	return false
 }
 
-func (c *client) runComplexPrompt(sessID string) (mcp.PromptsGetParams, bool) {
+func (c *client) runComplexPrompt() (mcp.PromptsGetParams, bool) {
 	fmt.Println(`
 Pardon the implementation of 'autocomplete' in this example, but it's a good idea to implement it in your own client.`)
 
-	temperature, exit := c.runPromptAutocomplete(sessID, "temperature")
+	temperature, exit := c.runPromptAutocomplete("temperature")
 	if exit {
 		return mcp.PromptsGetParams{}, true
 	}
-	style, exit := c.runPromptAutocomplete(sessID, "style")
+	style, exit := c.runPromptAutocomplete("style")
 	if exit {
 		return mcp.PromptsGetParams{}, true
 	}
@@ -269,7 +257,7 @@ Pardon the implementation of 'autocomplete' in this example, but it's a good ide
 	}, false
 }
 
-func (c *client) runPromptAutocomplete(sessID string, field string) (string, bool) {
+func (c *client) runPromptAutocomplete(field string) (string, bool) {
 	for {
 		fmt.Printf("Insert a %s:", field)
 
@@ -286,15 +274,9 @@ func (c *client) runPromptAutocomplete(sessID string, field string) (string, boo
 			return "", true
 		}
 
-		ac, err := c.cli.CompletesPrompt(c.ctx, sessID, mcp.CompletionCompleteParams{
-			Ref: mcp.CompletionCompleteRef{
-				Type: mcp.CompletionRefPrompt,
-				Name: "complex-prompt",
-			},
-			Argument: mcp.CompletionArgument{
-				Name:  field,
-				Value: input,
-			},
+		ac, err := c.cli.CompletesPrompt(c.ctx, "complex-prompt", mcp.CompletionArgument{
+			Name:  field,
+			Value: input,
 		})
 		if err != nil {
 			fmt.Printf("Failed to get autocomplete: %v\n", err)
@@ -324,12 +306,10 @@ Your input is not found in the list of possible completions, input an empty stri
 }
 
 //nolint:funlen
-func (c *client) runResources(sessID string) bool {
+func (c *client) runResources() bool {
 	cursor := ""
 	for {
-		listResources, err := c.cli.ListResources(c.ctx, sessID, mcp.ResourcesListParams{
-			Cursor: cursor,
-		})
+		listResources, err := c.cli.ListResources(c.ctx, cursor, "")
 		if err != nil {
 			log.Printf("failed to list resources: %v", err)
 			return true
@@ -385,27 +365,21 @@ func (c *client) runResources(sessID string) bool {
 		resource := listResources.Resources[resourceIdx]
 
 		if inputArr[0] == "subscribe" {
-			if err := c.cli.SubscribeResource(c.ctx, sessID, mcp.ResourcesSubscribeParams{
-				URI: resource.URI,
-			}); err != nil {
+			if err := c.cli.SubscribeResource(c.ctx, resource.URI); err != nil {
 				fmt.Printf("Failed to subscribe to resource: %v\n", err)
 			}
 			fmt.Printf("Subscribed to resource %s, check Notifications for updates\n", resource.URI)
 			return false
 		}
 		if inputArr[0] == "unsubscribe" {
-			if err := c.cli.UnsubscribeResource(c.ctx, sessID, mcp.ResourcesSubscribeParams{
-				URI: resource.URI,
-			}); err != nil {
+			if err := c.cli.UnsubscribeResource(c.ctx, resource.URI); err != nil {
 				fmt.Printf("Failed to unsubscribe from resource: %v\n", err)
 			}
 			fmt.Printf("Unsubscribed from resource %s\n", resource.URI)
 			return false
 		}
 
-		rs, err := c.cli.ReadResource(c.ctx, sessID, mcp.ResourcesReadParams{
-			URI: resource.URI,
-		})
+		rs, err := c.cli.ReadResource(c.ctx, resource.URI, "")
 		if err != nil {
 			fmt.Printf("Failed to get resource: %v\n", err)
 			return false
@@ -440,8 +414,8 @@ func (c *client) runResources(sessID string) bool {
 }
 
 //nolint:funlen
-func (c *client) runTools(sessID string) bool {
-	listTools, err := c.cli.ListTools(c.ctx, sessID, mcp.ToolsListParams{})
+func (c *client) runTools() bool {
+	listTools, err := c.cli.ListTools(c.ctx, "", "")
 	if err != nil {
 		log.Printf("failed to list tools: %v", err)
 		return true
@@ -508,7 +482,7 @@ func (c *client) runTools(sessID string) bool {
 	case "printEnv", "getTinyImage":
 	}
 
-	tr, err := c.cli.CallTool(c.ctx, sessID, params)
+	tr, err := c.cli.CallTool(c.ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
 	if err != nil {
 		fmt.Printf("Failed to call tool: %v\n", err)
 		return false

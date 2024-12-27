@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented unified test suite using the `Transport` interface.
 - Enhanced `SSEServer` to implement the `ServerTransport` interface.
 - Updated `SSEClient` to implement the `ClientTransport` interface.
+- Everything server now utilizes the `Transport` interface.
 
 ### Removed
 

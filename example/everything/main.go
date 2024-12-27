@@ -14,7 +14,8 @@ import (
 var port = "8080"
 
 func main() {
-	sse := everything.NewSSEServer(mcp.WithServerPingInterval(30 * time.Second))
+	sse := mcp.NewSSEServer()
+	server := everything.NewServer(sse)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%s", port),
@@ -22,8 +23,8 @@ func main() {
 	}
 
 	msgBaseURL := fmt.Sprintf("%s/message", baseURL())
-	http.Handle("/sse", sse.MCPServer.HandleSSE(msgBaseURL))
-	http.Handle("/message", sse.MCPServer.HandleMessage())
+	http.Handle("/sse", sse.HandleSSE(msgBaseURL))
+	http.Handle("/message", sse.HandleMessage())
 
 	go func() {
 		fmt.Printf("Server starting on %s\n", srv.Addr)
@@ -31,6 +32,19 @@ func main() {
 			log.Fatalf("Server error: %v", err)
 		}
 	}()
+
+	errsChan := make(chan error)
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+
+	go mcp.Serve(srvCtx, server, errsChan,
+		mcp.WithServerPingInterval(30*time.Second),
+		mcp.WithPromptServer(server),
+		mcp.WithResourceServer(server),
+		mcp.WithToolServer(server),
+		mcp.WithResourceSubscribedUpdater(server),
+		mcp.WithProgressReporter(server),
+		mcp.WithLogHandler(server),
+	)
 
 	// Wait for the server to start
 	time.Sleep(time.Second)
@@ -46,12 +60,13 @@ func main() {
 
 	fmt.Println("Client requested shutdown...")
 	fmt.Println("Shutting down server...")
+	srvCancel()
+	server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Attempt graceful shutdown
-	sse.MCPServer.Stop()
 	if err := srv.Shutdown(ctx); err != nil {
 		fmt.Printf("Server forced to shutdown: %v", err)
 		return

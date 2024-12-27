@@ -2,12 +2,14 @@ package everything
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/google/uuid"
 	"github.com/qri-io/jsonschema"
 )
 
@@ -74,7 +76,7 @@ var toolList = []mcp.Tool{
 }
 
 // ListTools implements mcp.ToolServer interface.
-func (s *SSEServer) ListTools(_ context.Context, _ mcp.ToolsListParams) (mcp.ToolList, error) {
+func (s *Server) ListTools(context.Context, mcp.ToolsListParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
 	s.log("ListTools", mcp.LogLevelDebug)
 
 	return mcp.ToolList{
@@ -83,7 +85,11 @@ func (s *SSEServer) ListTools(_ context.Context, _ mcp.ToolsListParams) (mcp.Too
 }
 
 // CallTool implements mcp.ToolServer interface.
-func (s *SSEServer) CallTool(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) CallTool(
+	ctx context.Context,
+	params mcp.ToolsCallParams,
+	requestClient mcp.RequestClientFunc,
+) (mcp.ToolResult, error) {
 	s.log(fmt.Sprintf("CallTool: %s", params.Name), mcp.LogLevelDebug)
 
 	switch params.Name {
@@ -96,7 +102,7 @@ func (s *SSEServer) CallTool(ctx context.Context, params mcp.ToolsCallParams) (m
 	case "printEnv":
 		return s.callPrintEnv(ctx, params)
 	case "sampleLLM":
-		return s.callSampleLLM(ctx, params)
+		return s.callSampleLLM(ctx, params, requestClient)
 	case "getTinyImage":
 		return s.callGetTinyImage(ctx, params)
 	default:
@@ -104,7 +110,7 @@ func (s *SSEServer) CallTool(ctx context.Context, params mcp.ToolsCallParams) (m
 	}
 }
 
-func (s *SSEServer) callEcho(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callEcho(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
 	vs := echoSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -128,7 +134,7 @@ func (s *SSEServer) callEcho(ctx context.Context, params mcp.ToolsCallParams) (m
 	}, nil
 }
 
-func (s *SSEServer) callAdd(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callAdd(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
 	vs := addSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -155,7 +161,7 @@ func (s *SSEServer) callAdd(ctx context.Context, params mcp.ToolsCallParams) (mc
 	}, nil
 }
 
-func (s *SSEServer) callLongRunningOperation(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
 	vs := longRunningOperationSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -201,7 +207,7 @@ func (s *SSEServer) callLongRunningOperation(ctx context.Context, params mcp.Too
 	}, nil
 }
 
-func (s *SSEServer) callPrintEnv(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callPrintEnv(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{
@@ -213,7 +219,11 @@ func (s *SSEServer) callPrintEnv(_ context.Context, _ mcp.ToolsCallParams) (mcp.
 	}, nil
 }
 
-func (s *SSEServer) callSampleLLM(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callSampleLLM(
+	ctx context.Context,
+	params mcp.ToolsCallParams,
+	requestClient mcp.RequestClientFunc,
+) (mcp.ToolResult, error) {
 	vs := sampleLLMSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -227,7 +237,7 @@ func (s *SSEServer) callSampleLLM(ctx context.Context, params mcp.ToolsCallParam
 	prompt, _ := params.Arguments["prompt"].(string)
 	maxTokens, _ := params.Arguments["maxTokens"].(float64)
 
-	sample, err := s.MCPServer.RequestSampling(ctx, mcp.SamplingParams{
+	samplingParams := mcp.SamplingParams{
 		Messages: []mcp.SamplingMessage{
 			{
 				Role: mcp.PromptRoleUser,
@@ -244,23 +254,40 @@ func (s *SSEServer) callSampleLLM(ctx context.Context, params mcp.ToolsCallParam
 		},
 		SystemPrompts: "You are a helpful assistant.",
 		MaxTokens:     int(maxTokens),
+	}
+
+	samplingParamsBs, err := json.Marshal(samplingParams)
+	if err != nil {
+		return mcp.ToolResult{}, fmt.Errorf("failed to marshal sampling params: %w", err)
+	}
+
+	resMsg, err := requestClient(mcp.JSONRPCMessage{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      mcp.MustString(uuid.New().String()),
+		Method:  mcp.MethodSamplingCreateMessage,
+		Params:  samplingParamsBs,
 	})
 	if err != nil {
 		return mcp.ToolResult{}, fmt.Errorf("failed to request sampling: %w", err)
+	}
+
+	var samplingResult mcp.SamplingResult
+	if err := json.Unmarshal(resMsg.Result, &samplingResult); err != nil {
+		return mcp.ToolResult{}, fmt.Errorf("failed to unmarshal sampling result: %w", err)
 	}
 
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
-				Text: sample.Content.Text,
+				Text: samplingResult.Content.Text,
 			},
 		},
 		IsError: false,
 	}, nil
 }
 
-func (s *SSEServer) callGetTinyImage(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callGetTinyImage(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{

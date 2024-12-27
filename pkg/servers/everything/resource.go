@@ -45,7 +45,11 @@ func genResources() []mcp.Resource {
 }
 
 // ListResources implements mcp.ResourceServer interface.
-func (s *SSEServer) ListResources(_ context.Context, params mcp.ResourcesListParams) (mcp.ResourceList, error) {
+func (s *Server) ListResources(
+	_ context.Context,
+	params mcp.ResourcesListParams,
+	_ mcp.RequestClientFunc,
+) (mcp.ResourceList, error) {
 	s.log(fmt.Sprintf("ListResources: %s", params.Cursor), mcp.LogLevelDebug)
 
 	startIndex := 0
@@ -70,7 +74,11 @@ func (s *SSEServer) ListResources(_ context.Context, params mcp.ResourcesListPar
 }
 
 // ReadResource implements mcp.ResourceServer interface.
-func (s *SSEServer) ReadResource(_ context.Context, params mcp.ResourcesReadParams) (mcp.Resource, error) {
+func (s *Server) ReadResource(
+	_ context.Context,
+	params mcp.ResourcesReadParams,
+	_ mcp.RequestClientFunc,
+) (mcp.Resource, error) {
 	s.log(fmt.Sprintf("ReadResource: %s", params.URI), mcp.LogLevelDebug)
 
 	if !strings.HasPrefix(params.URI, "test://static/resource/") {
@@ -91,9 +99,10 @@ func (s *SSEServer) ReadResource(_ context.Context, params mcp.ResourcesReadPara
 }
 
 // ListResourceTemplates implements mcp.ResourceServer interface.
-func (s *SSEServer) ListResourceTemplates(
+func (s *Server) ListResourceTemplates(
 	_ context.Context,
 	_ mcp.ResourcesTemplatesListParams,
+	_ mcp.RequestClientFunc,
 ) ([]mcp.ResourceTemplate, error) {
 	s.log("ListResourceTemplates", mcp.LogLevelDebug)
 
@@ -107,9 +116,10 @@ func (s *SSEServer) ListResourceTemplates(
 }
 
 // CompletesResourceTemplate implements mcp.ResourceServer interface.
-func (s *SSEServer) CompletesResourceTemplate(
+func (s *Server) CompletesResourceTemplate(
 	_ context.Context,
 	params mcp.CompletionCompleteParams,
+	_ mcp.RequestClientFunc,
 ) (mcp.CompletionResult, error) {
 	s.log(fmt.Sprintf("CompletesResourceTemplate: %s", params.Ref.Name), mcp.LogLevelDebug)
 
@@ -137,25 +147,25 @@ func (s *SSEServer) CompletesResourceTemplate(
 }
 
 // SubscribeResource implements mcp.ResourceServer interface.
-func (s *SSEServer) SubscribeResource(params mcp.ResourcesSubscribeParams) {
+func (s *Server) SubscribeResource(params mcp.ResourcesSubscribeParams) {
 	s.log(fmt.Sprintf("SubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Store(params.URI, struct{}{})
 }
 
 // UnsubscribeResource implements mcp.ResourceServer interface.
-func (s *SSEServer) UnsubscribeResource(params mcp.ResourcesSubscribeParams) {
+func (s *Server) UnsubscribeResource(params mcp.ResourcesSubscribeParams) {
 	s.log(fmt.Sprintf("UnsubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Delete(params.URI)
 }
 
 // ResourceSubscribedUpdates implements mcp.ResourceSubscribedUpdater interface.
-func (s *SSEServer) ResourceSubscribedUpdates() <-chan string {
+func (s *Server) ResourceSubscribedUpdates() <-chan string {
 	return s.updateResourceSubsChan
 }
 
-func (s *SSEServer) simulateResourceUpdates() {
+func (s *Server) simulateResourceUpdates() {
 	ticker := time.NewTicker(30 * time.Second)
 	for {
 		select {
