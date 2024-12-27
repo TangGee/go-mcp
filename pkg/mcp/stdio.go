@@ -143,7 +143,6 @@ func (s StdIO) SessionMessages() <-chan SessionMsgWithErrs {
 // After Close() is called, the transport cannot be reused and a new instance
 // should be created if needed.
 func (s StdIO) Close() {
-	close(s.messagesChan)
 	close(s.closeChan)
 }
 

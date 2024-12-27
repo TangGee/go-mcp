@@ -30,6 +30,8 @@ type SSEServer struct {
 	messagesChan chan SessionMsgWithErrs
 	errsChan     chan error
 	closeChan    chan struct{}
+
+	flushLock *sync.Mutex
 }
 
 // SSEClient implements a Server-Sent Events (SSE) client that manages server connections
@@ -57,6 +59,7 @@ func NewSSEServer() SSEServer {
 		messagesChan: make(chan SessionMsgWithErrs),
 		errsChan:     make(chan error),
 		closeChan:    make(chan struct{}),
+		flushLock:    new(sync.Mutex),
 	}
 }
 
@@ -101,10 +104,12 @@ func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
 			return
 		}
 
-		f, fOk := w.(http.Flusher)
+		s.flushLock.Lock()
+		f, fOk := wr.(http.Flusher)
 		if fOk {
 			f.Flush()
 		}
+		s.flushLock.Unlock()
 		errs <- nil
 	}()
 
@@ -168,10 +173,12 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 			return
 		}
 
+		s.flushLock.Lock()
 		f, ok := w.(http.Flusher)
 		if ok {
 			f.Flush()
 		}
+		s.flushLock.Unlock()
 
 		// Keep the connection open for new messages
 		select {

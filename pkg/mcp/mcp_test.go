@@ -145,6 +145,7 @@ func TestInitialize(t *testing.T) {
 				}
 				cli := mcp.NewClient(cliInfo, clientTransport, tc.serverRequirement, tc.clientOptions...)
 				err := cli.Connect()
+				defer cli.Close()
 				if !tc.wantSuccess {
 					if err == nil {
 						t.Errorf("expected error, got nil")
