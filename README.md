@@ -148,7 +148,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/MegaGrindStone/go-mcp"
+    "github.com/MegaGrindStone/go-mcp/pkg/mcp"
 )
 
 type AwesomeMCPServer struct{}
@@ -307,6 +307,17 @@ if err != nil {
 Here's a full working example combining all the pieces:
 
 ```go
+package main
+
+import (
+    "context"
+    "io"
+    "log"
+    "net/http"
+
+    "github.com/MegaGrindStone/go-mcp/pkg/mcp"
+)
+
 func main() {
     info := mcp.Info{
         Name:    "awesome-mcp-client",
