@@ -324,6 +324,10 @@ func (c *Client) ListPrompts(ctx context.Context, cursor string, progressToken M
 		return PromptList{}, err
 	}
 
+	if res.Error != nil {
+		return PromptList{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result PromptList
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return PromptList{}, err
@@ -368,6 +372,10 @@ func (c *Client) GetPrompt(
 		return PromptResult{}, err
 	}
 
+	if res.Error != nil {
+		return PromptResult{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result PromptResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return PromptResult{}, err
@@ -410,6 +418,10 @@ func (c *Client) CompletesPrompt(ctx context.Context, name string, arg Completio
 		return CompletionResult{}, err
 	}
 
+	if res.Error != nil {
+		return CompletionResult{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result CompletionResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return CompletionResult{}, err
@@ -446,6 +458,10 @@ func (c *Client) ListResources(ctx context.Context, cursor string, progressToken
 	})
 	if err != nil {
 		return ResourceList{}, err
+	}
+
+	if res.Error != nil {
+		return ResourceList{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
 	var result ResourceList
@@ -485,6 +501,10 @@ func (c *Client) ReadResource(ctx context.Context, uri string, progressToken Mus
 		return Resource{}, err
 	}
 
+	if res.Error != nil {
+		return Resource{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result Resource
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return Resource{}, err
@@ -518,6 +538,10 @@ func (c *Client) ListResourceTemplates(ctx context.Context, progressToken MustSt
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if res.Error != nil {
+		return nil, fmt.Errorf("result error: %w", res.Error)
 	}
 
 	var result []ResourceTemplate
@@ -566,6 +590,10 @@ func (c *Client) CompletesResourceTemplate(
 		return CompletionResult{}, err
 	}
 
+	if res.Error != nil {
+		return CompletionResult{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result CompletionResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return CompletionResult{}, err
@@ -587,13 +615,17 @@ func (c *Client) SubscribeResource(ctx context.Context, uri string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
 	}
-	_, err = c.sendRequest(ctx, JSONRPCMessage{
+	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		Method:  MethodResourcesSubscribe,
 		Params:  paramsBs,
 	})
 	if err != nil {
 		return err
+	}
+
+	if res.Error != nil {
+		return fmt.Errorf("result error: %w", res.Error)
 	}
 
 	return nil
@@ -612,13 +644,17 @@ func (c *Client) UnsubscribeResource(ctx context.Context, uri string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
 	}
-	_, err = c.sendRequest(ctx, JSONRPCMessage{
+	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		Method:  MethodResourcesUnsubscribe,
 		Params:  paramsBs,
 	})
 	if err != nil {
 		return err
+	}
+
+	if res.Error != nil {
+		return fmt.Errorf("result error: %w", res.Error)
 	}
 
 	return nil
@@ -652,6 +688,10 @@ func (c *Client) ListTools(ctx context.Context, cursor string, progressToken Mus
 	})
 	if err != nil {
 		return ToolList{}, err
+	}
+
+	if res.Error != nil {
+		return ToolList{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
 	var result ToolList
@@ -699,6 +739,10 @@ func (c *Client) CallTool(
 		return ToolResult{}, err
 	}
 
+	if res.Error != nil {
+		return ToolResult{}, fmt.Errorf("result error: %w", res.Error)
+	}
+
 	var result ToolResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
 		return ToolResult{}, err
@@ -721,13 +765,17 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
 	}
-	_, err = c.sendRequest(context.Background(), JSONRPCMessage{
+	res, err := c.sendRequest(context.Background(), JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		Method:  MethodLoggingSetLevel,
 		Params:  paramsBs,
 	})
 	if err != nil {
 		return err
+	}
+
+	if res.Error != nil {
+		return fmt.Errorf("result error: %w", res.Error)
 	}
 
 	return nil
