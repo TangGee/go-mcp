@@ -79,11 +79,11 @@ type ClientTransport interface {
 type PromptServer interface {
 	// ListPrompts returns a paginated list of available prompts.
 	// Returns error if operation fails or context is cancelled.
-	ListPrompts(ctx context.Context, params ListPromptsParams, requestClient RequestClientFunc) (PromptList, error)
+	ListPrompts(ctx context.Context, params ListPromptsParams, requestClient RequestClientFunc) (ListPromptResult, error)
 
 	// GetPrompt retrieves a specific prompt template by name with the given arguments.
 	// Returns error if prompt not found, arguments are invalid, or context is cancelled.
-	GetPrompt(ctx context.Context, params GetPromptParams, requestClient RequestClientFunc) (PromptResult, error)
+	GetPrompt(ctx context.Context, params GetPromptParams, requestClient RequestClientFunc) (GetPromptResult, error)
 
 	// CompletesPrompt provides completion suggestions for a prompt argument.
 	// Used to implement interactive argument completion in clients.
@@ -115,16 +115,18 @@ type PromptListUpdater interface {
 type ResourceServer interface {
 	// ListResources returns a paginated list of available resources.
 	// Returns error if operation fails or context is cancelled.
-	ListResources(ctx context.Context, params ListResourcesParams, requestClient RequestClientFunc) (ResourceList, error)
+	ListResources(ctx context.Context, params ListResourcesParams, requestClient RequestClientFunc) (
+		ListResourcesResult, error)
 
 	// ReadResource retrieves a specific resource by its URI.
 	// Returns error if resource not found, cannot be read, or context is cancelled.
-	ReadResource(ctx context.Context, params ReadResourceParams, requestClient RequestClientFunc) (Resource, error)
+	ReadResource(ctx context.Context, params ReadResourceParams, requestClient RequestClientFunc) (
+		ReadResourceResult, error)
 
 	// ListResourceTemplates returns all available resource templates.
 	// Returns error if templates cannot be retrieved or context is cancelled.
 	ListResourceTemplates(ctx context.Context, params ListResourceTemplatesParams,
-		requestClient RequestClientFunc) ([]ResourceTemplate, error)
+		requestClient RequestClientFunc) (ListResourceTemplatesResult, error)
 
 	// CompletesResourceTemplate provides completion suggestions for a resource template argument.
 	// Returns error if template doesn't exist, completions cannot be generated, or context is cancelled.
@@ -175,11 +177,11 @@ type ResourceSubscribedUpdater interface {
 type ToolServer interface {
 	// ListTools returns a paginated list of available tools.
 	// Returns error if operation fails or context is cancelled.
-	ListTools(ctx context.Context, params ListToolsParams, requestClient RequestClientFunc) (ToolList, error)
+	ListTools(ctx context.Context, params ListToolsParams, requestClient RequestClientFunc) (ListToolsResult, error)
 
 	// CallTool executes a specific tool with the given arguments.
 	// Returns error if tool not found, arguments are invalid, execution fails, or context is cancelled.
-	CallTool(ctx context.Context, params CallToolParams, requestClient RequestClientFunc) (ToolResult, error)
+	CallTool(ctx context.Context, params CallToolParams, requestClient RequestClientFunc) (CallToolResult, error)
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
@@ -423,9 +425,9 @@ type GetPromptParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// PromptList represents a paginated list of prompts returned by ListPrompts.
+// ListPromptResult represents a paginated list of prompts returned by ListPrompts.
 // NextCursor can be used to retrieve the next page of results.
-type PromptList struct {
+type ListPromptResult struct {
 	Prompts    []Prompt `json:"prompts"`
 	NextCursor string   `json:"nextCursor,omitempty"`
 }
@@ -446,8 +448,8 @@ type PromptArgument struct {
 	Required    bool   `json:"required,omitempty"`
 }
 
-// PromptResult represents the result of a prompt request.
-type PromptResult struct {
+// GetPromptResult represents the result of a prompt request.
+type GetPromptResult struct {
 	Description string          `json:"description,omitempty"`
 	Messages    []PromptMessage `json:"messages,omitempty"`
 }
@@ -496,11 +498,16 @@ type ResourcesSubscribeParams struct {
 	URI string `json:"uri"`
 }
 
-// ResourceList represents a paginated list of resources returned by ListResources.
+// ListResourcesResult represents a paginated list of resources returned by ListResources.
 // NextCursor can be used to retrieve the next page of results.
-type ResourceList struct {
+type ListResourcesResult struct {
 	Resources  []Resource `json:"resources"`
 	NextCursor string     `json:"nextCursor,omitempty"`
+}
+
+// ReadResourceResult represents the result of a read resource request.
+type ReadResourceResult struct {
+	Contents []Resource `json:"contents"`
 }
 
 // Resource represents a content resource in the system with associated metadata.
@@ -512,6 +519,11 @@ type Resource struct {
 	MimeType    string `json:"mimeType,omitempty"`
 	Text        string `json:"text,omitempty"`
 	Blob        string `json:"blob,omitempty"`
+}
+
+// ListResourceTemplatesResult represents the result of a list resource templates request.
+type ListResourceTemplatesResult struct {
+	Templates []ResourceTemplate `json:"resourceTemplates"`
 }
 
 // ResourceTemplate defines a template for generating resource URIs.
@@ -552,9 +564,9 @@ type CallToolParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// ToolList represents a paginated list of tools returned by ListTools.
+// ListToolsResult represents a paginated list of tools returned by ListTools.
 // NextCursor can be used to retrieve the next page of results.
-type ToolList struct {
+type ListToolsResult struct {
 	Tools      []Tool `json:"tools"`
 	NextCursor string `json:"nextCursor,omitempty"`
 }
@@ -567,9 +579,9 @@ type Tool struct {
 	InputSchema *jsonschema.Schema `json:"inputSchema,omitempty"`
 }
 
-// ToolResult represents the outcome of a tool invocation via CallTool.
+// CallToolResult represents the outcome of a tool invocation via CallTool.
 // IsError indicates whether the operation failed, with details in Content.
-type ToolResult struct {
+type CallToolResult struct {
 	Content []Content `json:"content"`
 	IsError bool      `json:"isError"`
 }

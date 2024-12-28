@@ -101,7 +101,7 @@ var getFileInfoSchema = jsonschema.Must(`{
   }
 }`)
 
-var toolList = mcp.ToolList{
+var toolList = mcp.ListToolsResult{
 	Tools: []mcp.Tool{
 		{
 			Name: "read_file",
@@ -203,7 +203,7 @@ without reading the actual content. Only works within allowed directories.
 	},
 }
 
-func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := readFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -211,7 +211,7 @@ func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -219,19 +219,19 @@ func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
 	}
 
 	if info.IsDir() {
-		return mcp.ToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
+		return mcp.CallToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
 	}
 
 	bs, err := os.ReadFile(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -242,7 +242,7 @@ func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 	}, nil
 }
 
-func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := readMultipleFilesSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -250,7 +250,7 @@ func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallTool
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	paths, _ := params.Arguments["paths"].([]any)
@@ -267,16 +267,16 @@ func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallTool
 
 		info, err := os.Stat(fullPath)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+			return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
 		}
 
 		if info.IsDir() {
-			return mcp.ToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
+			return mcp.CallToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
 		}
 
 		bs, err := os.ReadFile(fullPath)
 		if err != nil {
-			return mcp.ToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+			return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
 		}
 
 		content := fmt.Sprintf("File content of %s:\n%s\n", path, string(bs))
@@ -287,13 +287,13 @@ func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallTool
 		})
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: result,
 		IsError: false,
 	}, nil
 }
 
-func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := writeFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -301,7 +301,7 @@ func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) 
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -311,10 +311,10 @@ func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) 
 
 	err := os.WriteFile(fullPath, []byte(content), 0600)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -325,7 +325,7 @@ func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) 
 	}, nil
 }
 
-func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := editFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -333,7 +333,7 @@ func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -344,7 +344,7 @@ func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 
 	bs, err := os.ReadFile(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
 	}
 
 	newContent := string(bs)
@@ -360,7 +360,7 @@ func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 	}
 
 	if dryRun {
-		return mcp.ToolResult{
+		return mcp.CallToolResult{
 			Content: []mcp.Content{
 				{
 					Type: mcp.ContentTypeText,
@@ -373,10 +373,10 @@ func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 
 	err = os.WriteFile(fullPath, []byte(newContent), 0600)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -387,7 +387,7 @@ func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 	}, nil
 }
 
-func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := createDirectorySchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -395,7 +395,7 @@ func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolPa
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -404,10 +404,10 @@ func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolPa
 
 	err := os.MkdirAll(fullPath, 0700)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to create directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to create directory with path %s: %w", fullPath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -417,7 +417,7 @@ func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolPa
 	}, nil
 }
 
-func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := listDirectorySchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -425,7 +425,7 @@ func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolPara
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -434,7 +434,7 @@ func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolPara
 
 	files, err := os.ReadDir(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
 	}
 
 	var result []mcp.Content
@@ -453,13 +453,13 @@ func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolPara
 		})
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: result,
 		IsError: false,
 	}, nil
 }
 
-func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := directoryTreeSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -467,7 +467,7 @@ func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolPara
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -475,7 +475,7 @@ func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolPara
 
 	files, err := os.ReadDir(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
 	}
 
 	// TODO: Display actual directory tree instead of just directory listing.
@@ -496,13 +496,13 @@ func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolPara
 		})
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: result,
 		IsError: false,
 	}, nil
 }
 
-func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := moveFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -510,7 +510,7 @@ func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	source, _ := params.Arguments["source"].(string)
@@ -521,10 +521,10 @@ func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 
 	err := os.Rename(fullSourcePath, fullDestinationPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to move file with path %s: %w", fullSourcePath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to move file with path %s: %w", fullSourcePath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -535,7 +535,7 @@ func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (
 	}, nil
 }
 
-func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := searchFilesSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -543,7 +543,7 @@ func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	pattern, _ := params.Arguments["pattern"].(string)
@@ -588,11 +588,11 @@ func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams
 
 		return nil
 	}); err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to search files: %w", err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to search files: %w", err)
 	}
 
 	if len(result) == 0 {
-		return mcp.ToolResult{
+		return mcp.CallToolResult{
 			Content: []mcp.Content{
 				{
 					Type: mcp.ContentTypeText,
@@ -603,13 +603,13 @@ func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams
 		}, nil
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: result,
 		IsError: false,
 	}, nil
 }
 
-func getFileInfo(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func getFileInfo(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := getFileInfoSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -617,7 +617,7 @@ func getFileInfo(ctx context.Context, rootPath string, params mcp.CallToolParams
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	path, _ := params.Arguments["path"].(string)
@@ -625,10 +625,10 @@ func getFileInfo(ctx context.Context, rootPath string, params mcp.CallToolParams
 
 	info, err := os.Stat(fullPath)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,

@@ -51,9 +51,9 @@ func (m mockPromptServer) ListPrompts(
 	_ context.Context,
 	params mcp.ListPromptsParams,
 	_ mcp.RequestClientFunc,
-) (mcp.PromptList, error) {
+) (mcp.ListPromptResult, error) {
 	startIndex, endIndex, nextCursor := getPageInfo(params.Cursor, m.pageSize, len(m.prompts))
-	return mcp.PromptList{
+	return mcp.ListPromptResult{
 		Prompts:    m.prompts[startIndex:endIndex],
 		NextCursor: nextCursor,
 	}, nil
@@ -63,14 +63,14 @@ func (m mockPromptServer) GetPrompt(
 	_ context.Context,
 	params mcp.GetPromptParams,
 	_ mcp.RequestClientFunc,
-) (mcp.PromptResult, error) {
+) (mcp.GetPromptResult, error) {
 	idx := slices.IndexFunc(m.prompts, func(p mcp.Prompt) bool {
 		return p.Name == params.Name
 	})
 	if idx == -1 {
-		return mcp.PromptResult{}, fmt.Errorf("prompt not found")
+		return mcp.GetPromptResult{}, fmt.Errorf("prompt not found")
 	}
-	return mcp.PromptResult{
+	return mcp.GetPromptResult{
 		Description: m.prompts[idx].Description,
 		Messages: []mcp.PromptMessage{
 			{
@@ -108,8 +108,8 @@ func (m mockResourceServer) ListResources(
 	context.Context,
 	mcp.ListResourcesParams,
 	mcp.RequestClientFunc,
-) (mcp.ResourceList, error) {
-	return mcp.ResourceList{
+) (mcp.ListResourcesResult, error) {
+	return mcp.ListResourcesResult{
 		Resources: []mcp.Resource{
 			{
 				URI:         "test://resource1",
@@ -133,13 +133,17 @@ func (m mockResourceServer) ReadResource(
 	context.Context,
 	mcp.ReadResourceParams,
 	mcp.RequestClientFunc,
-) (mcp.Resource, error) {
-	return mcp.Resource{
-		URI:         "test://resource",
-		Name:        "Test Resource",
-		Description: "A test resource",
-		MimeType:    "text/plain",
-		Text:        "This is the resource content",
+) (mcp.ReadResourceResult, error) {
+	return mcp.ReadResourceResult{
+		Contents: []mcp.Resource{
+			{
+				URI:         "test://resource",
+				Name:        "Test Resource",
+				Description: "A test resource",
+				MimeType:    "text/plain",
+				Text:        "This is the resource content",
+			},
+		},
 	}, nil
 }
 
@@ -147,19 +151,21 @@ func (m mockResourceServer) ListResourceTemplates(
 	context.Context,
 	mcp.ListResourceTemplatesParams,
 	mcp.RequestClientFunc,
-) ([]mcp.ResourceTemplate, error) {
-	return []mcp.ResourceTemplate{
-		{
-			URITemplate: "test://resource/{name}",
-			Name:        "Test Template 1",
-			Description: "First test template",
-			MimeType:    "text/plain",
-		},
-		{
-			URITemplate: "test://resource/{id}",
-			Name:        "Test Template 2",
-			Description: "Second test template",
-			MimeType:    "application/json",
+) (mcp.ListResourceTemplatesResult, error) {
+	return mcp.ListResourceTemplatesResult{
+		Templates: []mcp.ResourceTemplate{
+			{
+				URITemplate: "test://resource/{name}",
+				Name:        "Test Template 1",
+				Description: "First test template",
+				MimeType:    "text/plain",
+			},
+			{
+				URITemplate: "test://resource/{id}",
+				Name:        "Test Template 2",
+				Description: "Second test template",
+				MimeType:    "application/json",
+			},
 		},
 	}, nil
 }
@@ -186,8 +192,8 @@ func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() <-chan string
 	return nil
 }
 
-func (m mockToolServer) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
-	return mcp.ToolList{
+func (m mockToolServer) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ListToolsResult, error) {
+	return mcp.ListToolsResult{
 		Tools: []mcp.Tool{
 			{
 				Name:        "test-tool",
@@ -203,8 +209,8 @@ func (m mockToolServer) ListTools(context.Context, mcp.ListToolsParams, mcp.Requ
 	}, nil
 }
 
-func (m mockToolServer) CallTool(context.Context, mcp.CallToolParams, mcp.RequestClientFunc) (mcp.ToolResult, error) {
-	return mcp.ToolResult{
+func (m mockToolServer) CallTool(context.Context, mcp.CallToolParams, mcp.RequestClientFunc) (mcp.CallToolResult, error) {
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,

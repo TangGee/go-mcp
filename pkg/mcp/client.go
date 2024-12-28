@@ -295,17 +295,17 @@ func (c *Client) Connect() error {
 }
 
 // ListPrompts retrieves a paginated list of available prompts from the server.
-// It returns a PromptList containing prompt metadata and pagination information.
+// It returns a ListPromptsResult containing prompt metadata and pagination information.
 //
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
 // See ListPromptsParams for details on available parameters including cursor for pagination
 // and optional progress tracking.
-func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (PromptList, error) {
+func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (ListPromptResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return PromptList{}, fmt.Errorf("failed to marshal params: %w", err)
+		return ListPromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -313,33 +313,33 @@ func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (Pro
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return PromptList{}, err
+		return ListPromptResult{}, err
 	}
 
 	if res.Error != nil {
-		return PromptList{}, fmt.Errorf("result error: %w", res.Error)
+		return ListPromptResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result PromptList
+	var result ListPromptResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return PromptList{}, err
+		return ListPromptResult{}, err
 	}
 
 	return result, nil
 }
 
 // GetPrompt retrieves a specific prompt by name with the given arguments.
-// It returns a PromptResult containing the prompt's content and metadata.
+// It returns a GetPromptResult containing the prompt's content and metadata.
 //
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
 // See GetPromptParams for details on available parameters including prompt name,
 // arguments, and optional progress tracking.
-func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (PromptResult, error) {
+func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (GetPromptResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return PromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
+		return GetPromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -347,16 +347,16 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (PromptR
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return PromptResult{}, err
+		return GetPromptResult{}, err
 	}
 
 	if res.Error != nil {
-		return PromptResult{}, fmt.Errorf("result error: %w", res.Error)
+		return GetPromptResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result PromptResult
+	var result GetPromptResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return PromptResult{}, err
+		return GetPromptResult{}, err
 	}
 
 	return result, nil
@@ -397,17 +397,17 @@ func (c *Client) CompletesPrompt(ctx context.Context, params CompletesCompletion
 }
 
 // ListResources retrieves a paginated list of available resources from the server.
-// It returns a ResourceList containing resource metadata and pagination information.
+// It returns a ListResourcesResult containing resource metadata and pagination information.
 //
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
 // See ListResourcesParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
-func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) (ResourceList, error) {
+func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) (ListResourcesResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return ResourceList{}, fmt.Errorf("failed to marshal params: %w", err)
+		return ListResourcesResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -415,16 +415,16 @@ func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) 
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return ResourceList{}, err
+		return ListResourcesResult{}, err
 	}
 
 	if res.Error != nil {
-		return ResourceList{}, fmt.Errorf("result error: %w", res.Error)
+		return ListResourcesResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result ResourceList
+	var result ListResourcesResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return ResourceList{}, err
+		return ListResourcesResult{}, err
 	}
 
 	return result, nil
@@ -438,10 +438,10 @@ func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) 
 //
 // See ReadResourceParams for details on available parameters including resource URI
 // and optional progress tracking.
-func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (Resource, error) {
+func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (ReadResourceResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return Resource{}, fmt.Errorf("failed to marshal params: %w", err)
+		return ReadResourceResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -449,16 +449,16 @@ func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (R
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return Resource{}, err
+		return ReadResourceResult{}, err
 	}
 
 	if res.Error != nil {
-		return Resource{}, fmt.Errorf("result error: %w", res.Error)
+		return ReadResourceResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result Resource
+	var result ReadResourceResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return Resource{}, err
+		return ReadResourceResult{}, err
 	}
 
 	return result, nil
@@ -475,10 +475,10 @@ func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (R
 func (c *Client) ListResourceTemplates(
 	ctx context.Context,
 	params ListResourceTemplatesParams,
-) ([]ResourceTemplate, error) {
+) (ListResourceTemplatesResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal params: %w", err)
+		return ListResourceTemplatesResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -486,16 +486,16 @@ func (c *Client) ListResourceTemplates(
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return nil, err
+		return ListResourceTemplatesResult{}, err
 	}
 
 	if res.Error != nil {
-		return nil, fmt.Errorf("result error: %w", res.Error)
+		return ListResourceTemplatesResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result []ResourceTemplate
+	var result ListResourceTemplatesResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return nil, err
+		return ListResourceTemplatesResult{}, err
 	}
 
 	return result, nil
@@ -597,17 +597,17 @@ func (c *Client) UnsubscribeResource(ctx context.Context, uri string) error {
 }
 
 // ListTools retrieves a paginated list of available tools from the server.
-// It returns a ToolList containing tool metadata and pagination information.
+// It returns a ListToolsResult containing tool metadata and pagination information.
 //
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
 // See ListToolsParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
-func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ToolList, error) {
+func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ListToolsResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return ToolList{}, fmt.Errorf("failed to marshal params: %w", err)
+		return ListToolsResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -615,16 +615,16 @@ func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ToolLis
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return ToolList{}, err
+		return ListToolsResult{}, err
 	}
 
 	if res.Error != nil {
-		return ToolList{}, fmt.Errorf("result error: %w", res.Error)
+		return ListToolsResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result ToolList
+	var result ListToolsResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return ToolList{}, err
+		return ListToolsResult{}, err
 	}
 
 	return result, nil
@@ -638,10 +638,10 @@ func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ToolLis
 //
 // See CallToolParams for details on available parameters including tool name,
 // arguments, and optional progress tracking.
-func (c *Client) CallTool(ctx context.Context, params CallToolParams) (ToolResult, error) {
+func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return ToolResult{}, fmt.Errorf("failed to marshal params: %w", err)
+		return CallToolResult{}, fmt.Errorf("failed to marshal params: %w", err)
 	}
 	res, err := c.sendRequest(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -649,16 +649,16 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (ToolResul
 		Params:  paramsBs,
 	})
 	if err != nil {
-		return ToolResult{}, err
+		return CallToolResult{}, err
 	}
 
 	if res.Error != nil {
-		return ToolResult{}, fmt.Errorf("result error: %w", res.Error)
+		return CallToolResult{}, fmt.Errorf("result error: %w", res.Error)
 	}
 
-	var result ToolResult
+	var result CallToolResult
 	if err := json.Unmarshal(res.Result, &result); err != nil {
-		return ToolResult{}, err
+		return CallToolResult{}, err
 	}
 
 	return result, nil

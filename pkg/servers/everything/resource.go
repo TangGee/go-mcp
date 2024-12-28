@@ -49,7 +49,7 @@ func (s *Server) ListResources(
 	_ context.Context,
 	params mcp.ListResourcesParams,
 	_ mcp.RequestClientFunc,
-) (mcp.ResourceList, error) {
+) (mcp.ListResourcesResult, error) {
 	s.log(fmt.Sprintf("ListResources: %s", params.Cursor), mcp.LogLevelDebug)
 
 	startIndex := 0
@@ -67,7 +67,7 @@ func (s *Server) ListResources(
 		nextCursor = fmt.Sprintf("%d", endIndex)
 	}
 
-	return mcp.ResourceList{
+	return mcp.ListResourcesResult{
 		Resources:  resources,
 		NextCursor: nextCursor,
 	}, nil
@@ -78,24 +78,26 @@ func (s *Server) ReadResource(
 	_ context.Context,
 	params mcp.ReadResourceParams,
 	_ mcp.RequestClientFunc,
-) (mcp.Resource, error) {
+) (mcp.ReadResourceResult, error) {
 	s.log(fmt.Sprintf("ReadResource: %s", params.URI), mcp.LogLevelDebug)
 
 	if !strings.HasPrefix(params.URI, "test://static/resource/") {
-		return mcp.Resource{}, fmt.Errorf("resource not found")
+		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
 	}
 	arrStr := strings.Split(params.URI, "/")
 	if len(arrStr) < 2 {
-		return mcp.Resource{}, fmt.Errorf("resource not found")
+		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
 	}
 
 	index, _ := strconv.Atoi(arrStr[len(arrStr)-1])
 	if index < 0 || index >= len(genResources()) {
-		return mcp.Resource{}, fmt.Errorf("resource not found")
+		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
 	}
 
 	resource := genResources()[index]
-	return resource, nil
+	return mcp.ReadResourceResult{
+		Contents: []mcp.Resource{resource},
+	}, nil
 }
 
 // ListResourceTemplates implements mcp.ResourceServer interface.
@@ -103,14 +105,16 @@ func (s *Server) ListResourceTemplates(
 	_ context.Context,
 	_ mcp.ListResourceTemplatesParams,
 	_ mcp.RequestClientFunc,
-) ([]mcp.ResourceTemplate, error) {
+) (mcp.ListResourceTemplatesResult, error) {
 	s.log("ListResourceTemplates", mcp.LogLevelDebug)
 
-	return []mcp.ResourceTemplate{
-		{
-			URITemplate: "test://static/resource/{id}",
-			Name:        "Static Resource",
-			Description: "A status resource with numeric ID",
+	return mcp.ListResourceTemplatesResult{
+		Templates: []mcp.ResourceTemplate{
+			{
+				URITemplate: "test://static/resource/{id}",
+				Name:        "Static Resource",
+				Description: "A status resource with numeric ID",
+			},
 		},
 	}, nil
 }

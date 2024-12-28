@@ -76,10 +76,10 @@ var toolList = []mcp.Tool{
 }
 
 // ListTools implements mcp.ToolServer interface.
-func (s *Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (s *Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ListToolsResult, error) {
 	s.log("ListTools", mcp.LogLevelDebug)
 
-	return mcp.ToolList{
+	return mcp.ListToolsResult{
 		Tools: toolList,
 	}, nil
 }
@@ -89,7 +89,7 @@ func (s *Server) CallTool(
 	ctx context.Context,
 	params mcp.CallToolParams,
 	requestClient mcp.RequestClientFunc,
-) (mcp.ToolResult, error) {
+) (mcp.CallToolResult, error) {
 	s.log(fmt.Sprintf("CallTool: %s", params.Name), mcp.LogLevelDebug)
 
 	switch params.Name {
@@ -106,11 +106,11 @@ func (s *Server) CallTool(
 	case "getTinyImage":
 		return s.callGetTinyImage(ctx, params)
 	default:
-		return mcp.ToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
+		return mcp.CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
 	}
 }
 
-func (s *Server) callEcho(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func (s *Server) callEcho(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := echoSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -118,12 +118,12 @@ func (s *Server) callEcho(ctx context.Context, params mcp.CallToolParams) (mcp.T
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	message, _ := params.Arguments["message"].(string)
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -134,7 +134,7 @@ func (s *Server) callEcho(ctx context.Context, params mcp.CallToolParams) (mcp.T
 	}, nil
 }
 
-func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := addSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -142,7 +142,7 @@ func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.To
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	a, _ := params.Arguments["a"].(float64)
@@ -150,7 +150,7 @@ func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.To
 
 	result := a + b
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -161,7 +161,7 @@ func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.To
 	}, nil
 }
 
-func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
+func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	vs := longRunningOperationSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -169,7 +169,7 @@ func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallTo
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	duration, _ := params.Arguments["duration"].(float64)
@@ -190,13 +190,13 @@ func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallTo
 			Total:         steps,
 		}:
 		case <-ctx.Done():
-			return mcp.ToolResult{}, ctx.Err()
+			return mcp.CallToolResult{}, ctx.Err()
 		case <-s.doneChan:
-			return mcp.ToolResult{}, fmt.Errorf("server closed")
+			return mcp.CallToolResult{}, fmt.Errorf("server closed")
 		}
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -207,8 +207,8 @@ func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallTo
 	}, nil
 }
 
-func (s *Server) callPrintEnv(_ context.Context, _ mcp.CallToolParams) (mcp.ToolResult, error) {
-	return mcp.ToolResult{
+func (s *Server) callPrintEnv(_ context.Context, _ mcp.CallToolParams) (mcp.CallToolResult, error) {
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -223,7 +223,7 @@ func (s *Server) callSampleLLM(
 	ctx context.Context,
 	params mcp.CallToolParams,
 	requestClient mcp.RequestClientFunc,
-) (mcp.ToolResult, error) {
+) (mcp.CallToolResult, error) {
 	vs := sampleLLMSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -231,7 +231,7 @@ func (s *Server) callSampleLLM(
 		for _, err := range errs {
 			errStr = append(errStr, err.Message)
 		}
-		return mcp.ToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
+		return mcp.CallToolResult{}, fmt.Errorf("params validation failed: %s", strings.Join(errStr, ", "))
 	}
 
 	prompt, _ := params.Arguments["prompt"].(string)
@@ -258,7 +258,7 @@ func (s *Server) callSampleLLM(
 
 	samplingParamsBs, err := json.Marshal(samplingParams)
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to marshal sampling params: %w", err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to marshal sampling params: %w", err)
 	}
 
 	resMsg, err := requestClient(mcp.JSONRPCMessage{
@@ -268,15 +268,15 @@ func (s *Server) callSampleLLM(
 		Params:  samplingParamsBs,
 	})
 	if err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to request sampling: %w", err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to request sampling: %w", err)
 	}
 
 	var samplingResult mcp.SamplingResult
 	if err := json.Unmarshal(resMsg.Result, &samplingResult); err != nil {
-		return mcp.ToolResult{}, fmt.Errorf("failed to unmarshal sampling result: %w", err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to unmarshal sampling result: %w", err)
 	}
 
-	return mcp.ToolResult{
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
@@ -287,8 +287,8 @@ func (s *Server) callSampleLLM(
 	}, nil
 }
 
-func (s *Server) callGetTinyImage(_ context.Context, _ mcp.CallToolParams) (mcp.ToolResult, error) {
-	return mcp.ToolResult{
+func (s *Server) callGetTinyImage(_ context.Context, _ mcp.CallToolParams) (mcp.CallToolResult, error) {
+	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type:     mcp.ContentTypeImage,

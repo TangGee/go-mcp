@@ -393,11 +393,16 @@ func (c *client) runResources() bool {
 		readResourceParams := mcp.ReadResourceParams{
 			URI: resource.URI,
 		}
-		rs, err := c.cli.ReadResource(c.ctx, readResourceParams)
+		result, err := c.cli.ReadResource(c.ctx, readResourceParams)
 		if err != nil {
 			fmt.Printf("Failed to get resource: %v\n", err)
 			return false
 		}
+		if len(result.Contents) == 0 {
+			fmt.Println("Resource is empty")
+			return false
+		}
+		rs := result.Contents[0]
 
 		fmt.Println()
 		fmt.Printf("Data for resource %s:\n", resource.URI)

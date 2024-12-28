@@ -68,7 +68,7 @@ func (s Server) RequireSamplingClient() bool {
 // The params parameter contains pagination and metadata for the listing operation.
 //
 // Returns a ToolList containing all available filesystem tools and any error encountered.
-func (s Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (s Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ListToolsResult, error) {
 	return toolList, nil
 }
 
@@ -85,7 +85,7 @@ func (s Server) CallTool(
 	ctx context.Context,
 	params mcp.CallToolParams,
 	_ mcp.RequestClientFunc,
-) (mcp.ToolResult, error) {
+) (mcp.CallToolResult, error) {
 	switch params.Name {
 	case "read_file":
 		return readFile(ctx, s.rootPath, params)
@@ -108,6 +108,6 @@ func (s Server) CallTool(
 	case "get_file_info":
 		return getFileInfo(ctx, s.rootPath, params)
 	default:
-		return mcp.ToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
+		return mcp.CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
 	}
 }
