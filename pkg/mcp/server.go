@@ -620,14 +620,14 @@ func (s server) handleResourceMessages(sess *session, msg JSONRPCMessage) error 
 		go sess.handleResourcesListTemplates(msg.ID, params, s.resourceServer)
 		return nil
 	case MethodResourcesSubscribe:
-		var params ResourcesSubscribeParams
+		var params SubscribeResourceParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
 		go sess.handleResourcesSubscribe(msg.ID, params, s.resourceServer)
 		return nil
 	case MethodResourcesUnsubscribe:
-		var params ResourcesSubscribeParams
+		var params UnsubscribeResourceParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -1040,7 +1040,7 @@ func (s *session) handleResourcesListTemplates(
 
 func (s *session) handleResourcesSubscribe(
 	msgID MustString,
-	params ResourcesSubscribeParams,
+	params SubscribeResourceParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {
@@ -1063,7 +1063,7 @@ func (s *session) handleResourcesSubscribe(
 
 func (s *session) handleResourcesUnsubscribe(
 	msgID MustString,
-	params ResourcesSubscribeParams,
+	params UnsubscribeResourceParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {

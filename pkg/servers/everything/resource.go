@@ -151,14 +151,14 @@ func (s *Server) CompletesResourceTemplate(
 }
 
 // SubscribeResource implements mcp.ResourceServer interface.
-func (s *Server) SubscribeResource(params mcp.ResourcesSubscribeParams) {
+func (s *Server) SubscribeResource(params mcp.SubscribeResourceParams) {
 	s.log(fmt.Sprintf("SubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Store(params.URI, struct{}{})
 }
 
 // UnsubscribeResource implements mcp.ResourceServer interface.
-func (s *Server) UnsubscribeResource(params mcp.ResourcesSubscribeParams) {
+func (s *Server) UnsubscribeResource(params mcp.UnsubscribeResourceParams) {
 	s.log(fmt.Sprintf("UnsubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Delete(params.URI)

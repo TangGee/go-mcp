@@ -542,11 +542,8 @@ func (c *Client) CompletesResourceTemplate(
 // When the resource is modified, the client will receive notifications through the
 // ResourceSubscribedWatcher interface if one was set using WithResourceSubscribedWatcher.
 //
-// The uri parameter identifies the resource to monitor for changes.
-func (c *Client) SubscribeResource(ctx context.Context, uri string) error {
-	params := ResourcesSubscribeParams{
-		URI: uri,
-	}
+// See SubscribeResourceParams for details on available parameters including resource URI.
+func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResourceParams) error {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -571,11 +568,8 @@ func (c *Client) SubscribeResource(ctx context.Context, uri string) error {
 // to a specific resource. After unsubscribing, the client will no longer receive
 // notifications through the ResourceSubscribedWatcher interface for this resource.
 //
-// The uri parameter identifies the resource to stop monitoring for changes.
-func (c *Client) UnsubscribeResource(ctx context.Context, uri string) error {
-	params := ResourcesSubscribeParams{
-		URI: uri,
-	}
+// See UnsubscribeResourceParams for details on available parameters including resource URI.
+func (c *Client) UnsubscribeResource(ctx context.Context, params UnsubscribeResourceParams) error {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -1054,7 +1048,7 @@ func (c *Client) handleNotificationMessages(msg JSONRPCMessage) error {
 		}
 	case methodNotificationsResourcesUpdated:
 		if c.resourceSubscribedWatcher != nil {
-			var params ResourcesSubscribeParams
+			var params SubscribeResourceParams
 			if err := json.Unmarshal(msg.Params, &params); err != nil {
 				nErr := fmt.Errorf("failed to unmarshal resources subscribe params: %w", err)
 				c.logError(nErr)

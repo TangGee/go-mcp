@@ -134,10 +134,10 @@ type ResourceServer interface {
 		requestClient RequestClientFunc) (CompletionResult, error)
 
 	// SubscribeResource registers interest in a specific resource URI.
-	SubscribeResource(params ResourcesSubscribeParams)
+	SubscribeResource(params SubscribeResourceParams)
 
 	// UnsubscribeResource unregisters interest in a specific resource URI.
-	UnsubscribeResource(params ResourcesSubscribeParams)
+	UnsubscribeResource(params UnsubscribeResourceParams)
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
@@ -491,9 +491,16 @@ type ListResourceTemplatesParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// ResourcesSubscribeParams contains parameters for subscribing to a resource.
-type ResourcesSubscribeParams struct {
+// SubscribeResourceParams contains parameters for subscribing to a resource.
+type SubscribeResourceParams struct {
 	// URI is the unique identifier of the resource to subscribe to.
+	// Must match URI used in ReadResource calls.
+	URI string `json:"uri"`
+}
+
+// UnsubscribeResourceParams contains parameters for unsubscribing from a resource.
+type UnsubscribeResourceParams struct {
+	// URI is the unique identifier of the resource to unsubscribe from.
 	// Must match URI used in ReadResource calls.
 	URI string `json:"uri"`
 }

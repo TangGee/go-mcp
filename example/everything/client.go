@@ -376,14 +376,18 @@ func (c *client) runResources() bool {
 		resource := listResources.Resources[resourceIdx]
 
 		if inputArr[0] == "subscribe" {
-			if err := c.cli.SubscribeResource(c.ctx, resource.URI); err != nil {
+			if err := c.cli.SubscribeResource(c.ctx, mcp.SubscribeResourceParams{
+				URI: resource.URI,
+			}); err != nil {
 				fmt.Printf("Failed to subscribe to resource: %v\n", err)
 			}
 			fmt.Printf("Subscribed to resource %s, check Notifications for updates\n", resource.URI)
 			return false
 		}
 		if inputArr[0] == "unsubscribe" {
-			if err := c.cli.UnsubscribeResource(c.ctx, resource.URI); err != nil {
+			if err := c.cli.UnsubscribeResource(c.ctx, mcp.UnsubscribeResourceParams{
+				URI: resource.URI,
+			}); err != nil {
 				fmt.Printf("Failed to unsubscribe from resource: %v\n", err)
 			}
 			fmt.Printf("Unsubscribed from resource %s\n", resource.URI)
