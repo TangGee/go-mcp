@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
@@ -19,7 +18,7 @@ func TestInitialize(t *testing.T) {
 		serverOptions     []mcp.ServerOption
 		clientOptions     []mcp.ClientOption
 		serverRequirement mcp.ServerRequirement
-		wantSuccess       bool
+		wantErr           bool
 	}
 
 	testCases := []testCase{
@@ -33,7 +32,7 @@ func TestInitialize(t *testing.T) {
 				ResourceServer: false,
 				ToolServer:     false,
 			},
-			wantSuccess: true,
+			wantErr: false,
 		},
 		{
 			name: "success with full capabilities",
@@ -42,12 +41,12 @@ func TestInitialize(t *testing.T) {
 				requireSamplingClient:  true,
 			},
 			serverOptions: []mcp.ServerOption{
-				mcp.WithPromptServer(mockPromptServer{}),
+				mcp.WithPromptServer(&mockPromptServer{}),
 				mcp.WithPromptListUpdater(mockPromptListUpdater{}),
-				mcp.WithResourceServer(mockResourceServer{}),
+				mcp.WithResourceServer(&mockResourceServer{}),
 				mcp.WithResourceListUpdater(mockResourceListUpdater{}),
 				mcp.WithResourceSubscribedUpdater(mockResourceSubscribedUpdater{}),
-				mcp.WithToolServer(mockToolServer{}),
+				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithToolListUpdater(mockToolListUpdater{}),
 				mcp.WithLogHandler(mockLogHandler{}),
 				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
@@ -67,7 +66,7 @@ func TestInitialize(t *testing.T) {
 				ResourceServer: true,
 				ToolServer:     true,
 			},
-			wantSuccess: true,
+			wantErr: false,
 		},
 		{
 			name: "fail insufficient client capabilities",
@@ -75,20 +74,20 @@ func TestInitialize(t *testing.T) {
 				requireRootsListClient: true,
 			},
 			serverOptions: []mcp.ServerOption{
-				mcp.WithPromptServer(mockPromptServer{}),
+				mcp.WithPromptServer(&mockPromptServer{}),
 			},
 			clientOptions: []mcp.ClientOption{},
 			serverRequirement: mcp.ServerRequirement{
 				PromptServer: true,
 			},
-			wantSuccess: false,
+			wantErr: true,
 		},
 		{
 			name:   "fail insufficient server capabilities",
 			server: &mockServer{},
 			serverOptions: []mcp.ServerOption{
-				mcp.WithPromptServer(mockPromptServer{}),
-				mcp.WithToolServer(mockToolServer{}),
+				mcp.WithPromptServer(&mockPromptServer{}),
+				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithLogHandler(mockLogHandler{}),
 				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 			},
@@ -96,7 +95,7 @@ func TestInitialize(t *testing.T) {
 			serverRequirement: mcp.ServerRequirement{
 				ResourceServer: true,
 			},
-			wantSuccess: false,
+			wantErr: true,
 		},
 	}
 
@@ -133,7 +132,7 @@ func TestInitialize(t *testing.T) {
 				cli := mcp.NewClient(cliInfo, clientTransport, tc.serverRequirement, tc.clientOptions...)
 				err := cli.Connect()
 				defer cli.Close()
-				if !tc.wantSuccess {
+				if tc.wantErr {
 					if err == nil {
 						t.Errorf("expected error, got nil")
 					}
@@ -148,114 +147,342 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
-// func TestClientGetPrompt(t *testing.T) {
-// 	tests := []struct {
-// 		name          string
-// 		promptName    string
-// 		arguments     map[string]string
-// 		progressToken mcp.MustString
-// 		wantErr       bool
-// 		wantResult    mcp.PromptResult
-// 	}{
-// 		{
-// 			name:       "successful prompt request",
-// 			promptName: "test-prompt",
-// 			arguments: map[string]string{
-// 				"test-arg": "test-value",
-// 			},
-// 			progressToken: "123",
-// 			wantErr:       false,
-// 			wantResult: mcp.PromptResult{
-// 				Description: "Test Prompt",
-// 				Messages: []mcp.PromptMessage{
-// 					{
-// 						Role: mcp.PromptRoleAssistant,
-// 						Content: mcp.Content{
-// 							Type: mcp.ContentTypeText,
-// 							Text: "Test response message",
-// 						},
-// 					},
-// 				},
-// 			},
-// 		},
-// 		{
-// 			name:       "empty prompt name",
-// 			promptName: "",
-// 			arguments: map[string]string{
-// 				"test-arg": "test-value",
-// 			},
-// 			progressToken: "123",
-// 			wantErr:       true,
-// 		},
-// 	}
-//
-// 	for _, tt := range tests {
-// 		t.Run(tt.name, func(t *testing.T) {
-// 			serverTransport, clientTransport := setupStdIO()
-//
-// 			srv := &mockServer{}
-// 			errsChan := make(chan error)
-// 			ctx, cancel := context.WithCancel(context.Background())
-// 			defer cancel()
-//
-// 			go mcp.Serve(ctx, srv, serverTransport, errsChan,
-// 				mcp.WithPromptServer(mockPromptServer{}))
-//
-// 			cli := mcp.NewClient(mcp.Info{
-// 				Name:    "test-client",
-// 				Version: "1.0",
-// 			}, clientTransport, mcp.ServerRequirement{
-// 				PromptServer: true,
-// 			})
-//
-// 			err := cli.Connect()
-// 			if err != nil {
-// 				t.Fatalf("failed to connect client: %v", err)
-// 			}
-// 			defer cli.Close()
-//
-// 			result, err := cli.GetPrompt(ctx, tt.promptName, tt.arguments, tt.progressToken)
-//
-// 			if (err != nil) != tt.wantErr {
-// 				t.Errorf("GetPrompt() error = %v, wantErr %v", err, tt.wantErr)
-// 				return
-// 			}
-//
-// 			if tt.wantErr {
-// 				return
-// 			}
-//
-// 			if result.Description != tt.wantResult.Description {
-// 				t.Errorf("GetPrompt() description = %v, want %v",
-// 					result.Description, tt.wantResult.Description)
-// 			}
-//
-// 			if len(result.Messages) != len(tt.wantResult.Messages) {
-// 				t.Errorf("GetPrompt() messages length = %v, want %v",
-// 					len(result.Messages), len(tt.wantResult.Messages))
-// 				return
-// 			}
-//
-// 			msg := result.Messages[0]
-// 			wantMsg := tt.wantResult.Messages[0]
-//
-// 			if msg.Role != wantMsg.Role {
-// 				t.Errorf("GetPrompt() message role = %v, want %v",
-// 					msg.Role, wantMsg.Role)
-// 			}
-//
-// 			if msg.Content.Type != wantMsg.Content.Type {
-// 				t.Errorf("GetPrompt() content type = %v, want %v",
-// 					msg.Content.Type, wantMsg.Content.Type)
-// 			}
-//
-// 			if msg.Content.Text != wantMsg.Content.Text {
-// 				t.Errorf("GetPrompt() content text = %v, want %v",
-// 					msg.Content.Text, wantMsg.Content.Text)
-// 			}
-// 		})
-// 	}
-// }
+func TestPrompt(t *testing.T) {
+	type testCase struct {
+		name     string
+		testFunc func(*testing.T, *mcp.Client, *mockPromptServer)
+	}
+
+	testCases := []testCase{
+		{
+			name: "list",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockPs *mockPromptServer) {
+				_, err := cli.ListPrompts(context.Background(), mcp.ListPromptsParams{
+					Cursor: "cursor",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockPs.listParams.Cursor != "cursor" {
+					t.Errorf("expected cursor cursor, got %s", mockPs.listParams.Cursor)
+				}
+			},
+		},
+		{
+			name: "get",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockPs *mockPromptServer) {
+				_, err := cli.GetPrompt(context.Background(), mcp.GetPromptParams{
+					Name: "test-prompt",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockPs.getParams.Name != "test-prompt" {
+					t.Errorf("expected prompt name test-prompt, got %s", mockPs.getParams.Name)
+				}
+			},
+		},
+		{
+			name: "completes",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockPs *mockPromptServer) {
+				_, err := cli.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
+					Ref: mcp.CompletionRef{
+						Type: mcp.CompletionRefPrompt,
+						Name: "test-prompt",
+					},
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockPs.completesParams.Ref.Name != "test-prompt" {
+					t.Errorf("expected prompt name test-prompt, got %s", mockPs.completesParams.Ref.Name)
+				}
+			},
+		},
+	}
+
+	var transportName string
+	for i := 0; i <= 1; i++ {
+		if i == 0 {
+			transportName = "SSE"
+		} else {
+			transportName = "StdIO"
+		}
+		for _, tc := range testCases {
+			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), func(t *testing.T) {
+				// Create a new transports for each test case
+				var serverTransport mcp.ServerTransport
+				var clientTransport mcp.ClientTransport
+				if i == 0 {
+					serverTransport, clientTransport = setupSSE()
+				} else {
+					serverTransport, clientTransport = setupStdIO()
+				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				srv := mockServer{}
+				errsChan := make(chan error)
+				mockPs := &mockPromptServer{}
+
+				go mcp.Serve(ctx, srv, serverTransport, errsChan, mcp.WithPromptServer(mockPs))
+
+				cliInfo := mcp.Info{
+					Name:    "test-client",
+					Version: "1.0",
+				}
+				cli := mcp.NewClient(cliInfo, clientTransport, mcp.ServerRequirement{
+					PromptServer: true,
+				})
+				defer cli.Close()
+
+				err := cli.Connect()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				tc.testFunc(t, cli, mockPs)
+			})
+		}
+	}
+}
+
+func TestResource(t *testing.T) {
+	type testCase struct {
+		name     string
+		testFunc func(*testing.T, *mcp.Client, *mockResourceServer)
+	}
+
+	testCases := []testCase{
+		{
+			name: "list",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				_, err := cli.ListResources(context.Background(), mcp.ListResourcesParams{
+					Cursor: "cursor",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.listParams.Cursor != "cursor" {
+					t.Errorf("expected cursor cursor, got %s", mockRs.listParams.Cursor)
+				}
+			},
+		},
+		{
+			name: "read",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				_, err := cli.ReadResource(context.Background(), mcp.ReadResourceParams{
+					URI: "test://resource",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.readParams.URI != "test://resource" {
+					t.Errorf("expected URI test://resource, got %s", mockRs.readParams.URI)
+				}
+			},
+		},
+		{
+			name: "completes",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				_, err := cli.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
+					Ref: mcp.CompletionRef{
+						Type: mcp.CompletionRefResource,
+						Name: "test-resource",
+					},
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.completesTemplateParams.Ref.Name != "test-resource" {
+					t.Errorf("expected resource name test-resource, got %s", mockRs.completesTemplateParams.Ref.Name)
+				}
+			},
+		},
+		{
+			name: "subscribe",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				err := cli.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
+					URI: "test://resource",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.subscribeParams.URI != "test://resource" {
+					t.Errorf("expected URI test://resource, got %s", mockRs.subscribeParams.URI)
+				}
+			},
+		},
+		{
+			name: "unsubscribe",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				err := cli.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
+					URI: "test://resource",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.unsubscribeParams.URI != "test://resource" {
+					t.Errorf("expected URI test://resource, got %s", mockRs.unsubscribeParams.URI)
+				}
+			},
+		},
+	}
+
+	var transportName string
+	for i := 0; i <= 1; i++ {
+		if i == 0 {
+			transportName = "SSE"
+		} else {
+			transportName = "StdIO"
+		}
+		for _, tc := range testCases {
+			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), func(t *testing.T) {
+				// Create a new transports for each test case
+				var serverTransport mcp.ServerTransport
+				var clientTransport mcp.ClientTransport
+				if i == 0 {
+					serverTransport, clientTransport = setupSSE()
+				} else {
+					serverTransport, clientTransport = setupStdIO()
+				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				srv := mockServer{}
+				errsChan := make(chan error)
+				mockRs := &mockResourceServer{}
+
+				go mcp.Serve(ctx, srv, serverTransport, errsChan, mcp.WithResourceServer(mockRs))
+
+				cliInfo := mcp.Info{
+					Name:    "test-client",
+					Version: "1.0",
+				}
+				cli := mcp.NewClient(cliInfo, clientTransport, mcp.ServerRequirement{
+					ResourceServer: true,
+				})
+				defer cli.Close()
+
+				err := cli.Connect()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				tc.testFunc(t, cli, mockRs)
+			})
+		}
+	}
+}
+
+func TestTool(t *testing.T) {
+	type testCase struct {
+		name     string
+		testFunc func(*testing.T, *mcp.Client, *mockToolServer)
+	}
+
+	testCases := []testCase{
+		{
+			name: "list",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockTs *mockToolServer) {
+				_, err := cli.ListTools(context.Background(), mcp.ListToolsParams{
+					Cursor: "cursor",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockTs.listParams.Cursor != "cursor" {
+					t.Errorf("expected cursor cursor, got %s", mockTs.listParams.Cursor)
+				}
+			},
+		},
+		{
+			name: "call",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockTs *mockToolServer) {
+				_, err := cli.CallTool(context.Background(), mcp.CallToolParams{
+					Name: "test-tool",
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockTs.callParams.Name != "test-tool" {
+					t.Errorf("expected tool name test-tool, got %s", mockTs.callParams.Name)
+				}
+			},
+		},
+	}
+
+	var transportName string
+	for i := 0; i <= 1; i++ {
+		if i == 0 {
+			transportName = "SSE"
+		} else {
+			transportName = "StdIO"
+		}
+		for _, tc := range testCases {
+			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), func(t *testing.T) {
+				// Create a new transports for each test case
+				var serverTransport mcp.ServerTransport
+				var clientTransport mcp.ClientTransport
+				if i == 0 {
+					serverTransport, clientTransport = setupSSE()
+				} else {
+					serverTransport, clientTransport = setupStdIO()
+				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				srv := mockServer{}
+				errsChan := make(chan error)
+				mockTS := &mockToolServer{}
+
+				go mcp.Serve(ctx, srv, serverTransport, errsChan, mcp.WithToolServer(mockTS))
+
+				cliInfo := mcp.Info{
+					Name:    "test-client",
+					Version: "1.0",
+				}
+				cli := mcp.NewClient(cliInfo, clientTransport, mcp.ServerRequirement{
+					ToolServer: true,
+				})
+				defer cli.Close()
+
+				err := cli.Connect()
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				tc.testFunc(t, cli, mockTS)
+			})
+		}
+	}
+}
 
 func setupSSE() (mcp.SSEServer, *mcp.SSEClient) {
 	srv := mcp.NewSSEServer()
@@ -286,29 +513,4 @@ func setupStdIO() (mcp.StdIO, mcp.StdIO) {
 	go cliIO.Start()
 
 	return srvIO, cliIO
-}
-
-func getPageInfo(cursor string, pageSize, totalSize int) (int, int, string) {
-	cursorInt, err := strconv.Atoi(cursor)
-	if err != nil {
-		cursorInt = 1
-	}
-
-	startIndex := (cursorInt - 1) * pageSize
-	endIndex := startIndex + pageSize
-	if endIndex > totalSize {
-		endIndex = totalSize
-	}
-
-	countPage := totalSize / pageSize
-	if totalSize%pageSize != 0 {
-		countPage++
-	}
-
-	nextCursor := strconv.Itoa(cursorInt + 1)
-	if cursorInt == countPage {
-		nextCursor = ""
-	}
-
-	return startIndex, endIndex, nextCursor
 }
