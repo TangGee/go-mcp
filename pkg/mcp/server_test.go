@@ -2,6 +2,8 @@ package mcp_test
 
 import (
 	"context"
+	"fmt"
+	"slices"
 
 	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
 	"github.com/qri-io/jsonschema"
@@ -12,7 +14,10 @@ type mockServer struct {
 	requireSamplingClient  bool
 }
 
-type mockPromptServer struct{}
+type mockPromptServer struct {
+	prompts  []mcp.Prompt
+	pageSize int
+}
 
 type mockPromptListUpdater struct{}
 
@@ -43,24 +48,30 @@ func (m mockServer) RequireSamplingClient() bool {
 }
 
 func (m mockPromptServer) ListPrompts(
-	context.Context,
-	mcp.PromptsListParams,
-	mcp.RequestClientFunc,
+	_ context.Context,
+	params mcp.PromptsListParams,
+	_ mcp.RequestClientFunc,
 ) (mcp.PromptList, error) {
+	startIndex, endIndex, nextCursor := getPageInfo(params.Cursor, m.pageSize, len(m.prompts))
 	return mcp.PromptList{
-		Prompts: []mcp.Prompt{
-			{Name: "test-prompt"},
-		},
+		Prompts:    m.prompts[startIndex:endIndex],
+		NextCursor: nextCursor,
 	}, nil
 }
 
 func (m mockPromptServer) GetPrompt(
-	context.Context,
-	mcp.PromptsGetParams,
-	mcp.RequestClientFunc,
+	_ context.Context,
+	params mcp.PromptsGetParams,
+	_ mcp.RequestClientFunc,
 ) (mcp.PromptResult, error) {
+	idx := slices.IndexFunc(m.prompts, func(p mcp.Prompt) bool {
+		return p.Name == params.Name
+	})
+	if idx == -1 {
+		return mcp.PromptResult{}, fmt.Errorf("prompt not found")
+	}
 	return mcp.PromptResult{
-		Description: "Test Prompt",
+		Description: m.prompts[idx].Description,
 		Messages: []mcp.PromptMessage{
 			{
 				Role: mcp.PromptRoleAssistant,

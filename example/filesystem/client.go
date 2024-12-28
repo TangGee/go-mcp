@@ -53,7 +53,7 @@ func (c client) run() {
 	}
 
 	for {
-		tools, err := c.cli.ListTools(c.ctx, "", "")
+		tools, err := c.cli.ListTools(c.ctx, mcp.ToolsListParams{})
 		if err != nil {
 			fmt.Printf("failed to list tools: %v\n", err)
 			return
@@ -168,7 +168,11 @@ func (c client) callReadFile() bool {
 		"path": input,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "read_file", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "read_file",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -200,7 +204,11 @@ func (c client) callReadMultipleFiles() bool {
 		"paths": strings.Split(input, ","),
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "read_multiple_files", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "read_multiple_files",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -250,7 +258,11 @@ func (c client) callWriteFile() bool {
 		"content": content,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "write_file", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "write_file",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -325,7 +337,11 @@ func (c client) callEditFile() bool {
 		"dryRun": false,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "edit_file", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "edit_file",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -357,7 +373,11 @@ func (c client) callCreateDirectory() bool {
 		"path": input,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "create_directory", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "create_directory",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -389,7 +409,11 @@ func (c *client) callListDirectory() bool {
 		"path": input,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "list_directory", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "list_directory",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -423,7 +447,11 @@ func (c client) callDirectoryTree() bool {
 		"path": input,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "directory_tree", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "directory_tree",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -471,7 +499,11 @@ func (c client) callMoveFile() bool {
 		"destination": destination,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "move_file", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "move_file",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -528,7 +560,11 @@ func (c client) callSearchFiles() bool {
 		"excludePatterns": excludePatterns,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "search_files", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "search_files",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false
@@ -562,7 +598,11 @@ func (c client) callGetFileInfo() bool {
 		"path": input,
 	}
 
-	result, err := c.cli.CallTool(c.ctx, "get_file_info", args, "")
+	params := mcp.ToolsCallParams{
+		Name:      "get_file_info",
+		Arguments: args,
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("failed to call tool: %v\n", err)
 		return false

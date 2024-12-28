@@ -43,7 +43,7 @@ type ServerRequirement struct {
 //	defer client.Close()
 //
 //	// Use client methods...
-//	prompts, err := client.ListPrompts(ctx, "", "")
+//	prompts, err := client.ListPrompts(ctx, PromptsListParams{})
 type Client struct {
 	capabilities               ClientCapabilities
 	info                       Info
@@ -297,20 +297,12 @@ func (c *Client) Connect() error {
 // ListPrompts retrieves a paginated list of available prompts from the server.
 // It returns a PromptList containing prompt metadata and pagination information.
 //
-// The cursor parameter enables pagination through the prompt list. An empty cursor
-// starts from the beginning. Use the NextCursor from the returned PromptList for
-// subsequent pages.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request.
-func (c *Client) ListPrompts(ctx context.Context, cursor string, progressToken MustString) (PromptList, error) {
-	params := PromptsListParams{
-		Cursor: cursor,
-		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}
+// See PromptsListParams for details on available parameters including cursor for pagination
+// and optional progress tracking.
+func (c *Client) ListPrompts(ctx context.Context, params PromptsListParams) (PromptList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return PromptList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -339,26 +331,12 @@ func (c *Client) ListPrompts(ctx context.Context, cursor string, progressToken M
 // GetPrompt retrieves a specific prompt by name with the given arguments.
 // It returns a PromptResult containing the prompt's content and metadata.
 //
-// The name parameter specifies which prompt to retrieve. The arguments parameter
-// allows passing key-value pairs that will be used to customize the prompt content.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request. This is particularly useful for long-running
-// prompt generations that need to be interrupted.
-func (c *Client) GetPrompt(
-	ctx context.Context,
-	name string,
-	arguments map[string]string,
-	progressToken MustString,
-) (PromptResult, error) {
-	params := PromptsGetParams{
-		Name:      name,
-		Arguments: arguments,
-		Meta:      ParamsMeta{ProgressToken: progressToken},
-	}
+// See PromptsGetParams for details on available parameters including prompt name,
+// arguments, and optional progress tracking.
+func (c *Client) GetPrompt(ctx context.Context, params PromptsGetParams) (PromptResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return PromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -387,24 +365,12 @@ func (c *Client) GetPrompt(
 // CompletesPrompt requests completion suggestions for a prompt-based completion.
 // It returns a CompletionResult containing the completion suggestions.
 //
-// The name parameter specifies which prompt to use as the completion source.
-// The arg parameter provides the completion context and configuration through
-// the CompletionArgument structure.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// This method is particularly useful for implementing intelligent code completion
-// or text suggestions based on prompt templates.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the completion request. This allows graceful interruption
-// of long-running completion operations.
-func (c *Client) CompletesPrompt(ctx context.Context, name string, arg CompletionArgument) (CompletionResult, error) {
-	params := CompletionCompleteParams{
-		Ref: CompletionCompleteRef{
-			Type: CompletionRefPrompt,
-			Name: name,
-		},
-		Argument: arg,
-	}
+// See CompletionCompleteParams for details on available parameters including
+// completion reference and argument information.
+func (c *Client) CompletesPrompt(ctx context.Context, params CompletionCompleteParams) (CompletionResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CompletionResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -433,20 +399,12 @@ func (c *Client) CompletesPrompt(ctx context.Context, name string, arg Completio
 // ListResources retrieves a paginated list of available resources from the server.
 // It returns a ResourceList containing resource metadata and pagination information.
 //
-// The cursor parameter enables pagination through the resource list. An empty cursor
-// starts from the beginning. Use the NextCursor from the returned ResourceList for
-// subsequent pages.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request.
-func (c *Client) ListResources(ctx context.Context, cursor string, progressToken MustString) (ResourceList, error) {
-	params := ResourcesListParams{
-		Cursor: cursor,
-		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}
+// See ResourcesListParams for details on available parameters including cursor for
+// pagination and optional progress tracking.
+func (c *Client) ListResources(ctx context.Context, params ResourcesListParams) (ResourceList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ResourceList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -472,22 +430,15 @@ func (c *Client) ListResources(ctx context.Context, cursor string, progressToken
 	return result, nil
 }
 
-// ReadResource retrieves the content and metadata of a specific resource identified by its URI.
+// ReadResource retrieves the content and metadata of a specific resource.
 // It returns a Resource containing the resource's content, type, and associated metadata.
 //
-// The uri parameter specifies which resource to retrieve. The URI format should follow
-// the server's resource addressing scheme.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request.
-func (c *Client) ReadResource(ctx context.Context, uri string, progressToken MustString) (Resource, error) {
-	params := ResourcesReadParams{
-		URI:  uri,
-		Meta: ParamsMeta{ProgressToken: progressToken},
-	}
+// See ResourcesReadParams for details on available parameters including resource URI
+// and optional progress tracking.
+func (c *Client) ReadResource(ctx context.Context, params ResourcesReadParams) (Resource, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return Resource{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -515,18 +466,16 @@ func (c *Client) ReadResource(ctx context.Context, uri string, progressToken Mus
 
 // ListResourceTemplates retrieves a list of available resource templates from the server.
 // Resource templates allow servers to expose parameterized resources using URI templates.
-// These templates can be used to generate resource URIs by providing arguments,
-// which may be auto-completed through the CompletesResourceTemplate.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request.
-func (c *Client) ListResourceTemplates(ctx context.Context, progressToken MustString) ([]ResourceTemplate, error) {
-	params := ResourcesTemplatesListParams{
-		Meta: ParamsMeta{ProgressToken: progressToken},
-	}
+// See ResourcesTemplatesListParams for details on available parameters including
+// optional progress tracking.
+func (c *Client) ListResourceTemplates(
+	ctx context.Context,
+	params ResourcesTemplatesListParams,
+) ([]ResourceTemplate, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal params: %w", err)
@@ -553,30 +502,17 @@ func (c *Client) ListResourceTemplates(ctx context.Context, progressToken MustSt
 }
 
 // CompletesResourceTemplate requests completion suggestions for a resource template.
-// It returns a CompletionResult containing the completion suggestions based on the
-// template's content and structure.
+// It returns a CompletionResult containing the completion suggestions.
 //
-// The uri parameter identifies the resource template to use for completion.
-// The arg parameter provides completion context and configuration through the
-// CompletionArgument structure.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// This method is particularly useful for implementing intelligent code completion
-// or content suggestions based on resource templates.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the completion request.
+// See CompletionCompleteParams for details on available parameters including
+// completion reference and argument information.
 func (c *Client) CompletesResourceTemplate(
 	ctx context.Context,
-	uri string,
-	arg CompletionArgument,
+	params CompletionCompleteParams,
 ) (CompletionResult, error) {
-	params := CompletionCompleteParams{
-		Ref: CompletionCompleteRef{
-			Type: CompletionRefResource,
-			URI:  uri,
-		},
-		Argument: arg,
-	}
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CompletionResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -663,20 +599,12 @@ func (c *Client) UnsubscribeResource(ctx context.Context, uri string) error {
 // ListTools retrieves a paginated list of available tools from the server.
 // It returns a ToolList containing tool metadata and pagination information.
 //
-// The cursor parameter enables pagination through the tool list. An empty cursor
-// starts from the beginning. Use the NextCursor from the returned ToolList for
-// subsequent pages.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the request.
-func (c *Client) ListTools(ctx context.Context, cursor string, progressToken MustString) (ToolList, error) {
-	params := ToolsListParams{
-		Cursor: cursor,
-		Meta:   ParamsMeta{ProgressToken: progressToken},
-	}
+// See ToolsListParams for details on available parameters including cursor for
+// pagination and optional progress tracking.
+func (c *Client) ListTools(ctx context.Context, params ToolsListParams) (ToolList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ToolList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -702,30 +630,15 @@ func (c *Client) ListTools(ctx context.Context, cursor string, progressToken Mus
 	return result, nil
 }
 
-// CallTool executes a specific tool with the given arguments and returns its result.
+// CallTool executes a specific tool and returns its result.
 // It provides a way to invoke server-side tools that can perform specialized operations.
 //
-// The name parameter identifies which tool to execute. The arguments parameter
-// provides tool-specific configuration as key-value pairs that will be passed to
-// the tool during execution.
+// The request can be cancelled via the context. When cancelled, a cancellation
+// request will be sent to the server to stop processing.
 //
-// The progressToken allows tracking the operation's progress through progress notifications.
-// Pass an empty string if progress tracking is not needed.
-//
-// If the provided context is cancelled, a cancellation request will be sent to the
-// server to stop processing the tool execution. This is particularly useful for
-// long-running tool operations that need to be interrupted.
-func (c *Client) CallTool(
-	ctx context.Context,
-	name string,
-	arguments map[string]any,
-	progressToken MustString,
-) (ToolResult, error) {
-	params := ToolsCallParams{
-		Name:      name,
-		Arguments: arguments,
-		Meta:      ParamsMeta{ProgressToken: progressToken},
-	}
+// See ToolsCallParams for details on available parameters including tool name,
+// arguments, and optional progress tracking.
+func (c *Client) CallTool(ctx context.Context, params ToolsCallParams) (ToolResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("failed to marshal params: %w", err)

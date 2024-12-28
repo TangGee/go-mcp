@@ -147,7 +147,7 @@ func (c *client) run() {
 }
 
 func (c *client) runPrompts() bool {
-	listPrompts, err := c.cli.ListPrompts(c.ctx, "", "")
+	listPrompts, err := c.cli.ListPrompts(c.ctx, mcp.PromptsListParams{})
 	if err != nil {
 		log.Printf("failed to list prompts: %v", err)
 		return true
@@ -197,7 +197,7 @@ func (c *client) runPrompts() bool {
 		}
 	}
 
-	pr, err := c.cli.GetPrompt(c.ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
+	pr, err := c.cli.GetPrompt(c.ctx, params)
 	if err != nil {
 		fmt.Printf("Failed to get prompt: %v\n", err)
 		return false
@@ -274,10 +274,18 @@ func (c *client) runPromptAutocomplete(field string) (string, bool) {
 			return "", true
 		}
 
-		ac, err := c.cli.CompletesPrompt(c.ctx, "complex-prompt", mcp.CompletionArgument{
-			Name:  field,
-			Value: input,
-		})
+		params := mcp.CompletionCompleteParams{
+			Ref: mcp.CompletionCompleteRef{
+				Type: mcp.CompletionRefPrompt,
+				Name: "complex-prompt",
+			},
+			Argument: mcp.CompletionArgument{
+				Name:  field,
+				Value: input,
+			},
+		}
+
+		ac, err := c.cli.CompletesPrompt(c.ctx, params)
 		if err != nil {
 			fmt.Printf("Failed to get autocomplete: %v\n", err)
 			continue
@@ -309,7 +317,10 @@ Your input is not found in the list of possible completions, input an empty stri
 func (c *client) runResources() bool {
 	cursor := ""
 	for {
-		listResources, err := c.cli.ListResources(c.ctx, cursor, "")
+		params := mcp.ResourcesListParams{
+			Cursor: cursor,
+		}
+		listResources, err := c.cli.ListResources(c.ctx, params)
 		if err != nil {
 			log.Printf("failed to list resources: %v", err)
 			return true
@@ -379,7 +390,10 @@ func (c *client) runResources() bool {
 			return false
 		}
 
-		rs, err := c.cli.ReadResource(c.ctx, resource.URI, "")
+		readResourceParams := mcp.ResourcesReadParams{
+			URI: resource.URI,
+		}
+		rs, err := c.cli.ReadResource(c.ctx, readResourceParams)
 		if err != nil {
 			fmt.Printf("Failed to get resource: %v\n", err)
 			return false
@@ -415,7 +429,10 @@ func (c *client) runResources() bool {
 
 //nolint:funlen
 func (c *client) runTools() bool {
-	listTools, err := c.cli.ListTools(c.ctx, "", "")
+	listToolsParams := mcp.ToolsListParams{
+		Cursor: "",
+	}
+	listTools, err := c.cli.ListTools(c.ctx, listToolsParams)
 	if err != nil {
 		log.Printf("failed to list tools: %v", err)
 		return true
@@ -482,7 +499,7 @@ func (c *client) runTools() bool {
 	case "printEnv", "getTinyImage":
 	}
 
-	tr, err := c.cli.CallTool(c.ctx, params.Name, params.Arguments, params.Meta.ProgressToken)
+	tr, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
 		fmt.Printf("Failed to call tool: %v\n", err)
 		return false
