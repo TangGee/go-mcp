@@ -1,6 +1,6 @@
 # go-mcp
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/MegaGrindStone/go-mcp.svg)](https://pkg.go.dev/github.com/MegaGrindStone/go-mcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/MegaGrindStone/go-mcp.svg)](https://pkg.go.dev/github.com/MegaGrindStone/go-mcp/pkg/mcp)
 ![CI](https://github.com/MegaGrindStone/go-mcp/actions/workflows/ci.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/MegaGrindStone/go-mcp)](https://goreportcard.com/report/github.com/MegaGrindStone/go-mcp)
 [![codecov](https://codecov.io/gh/MegaGrindStone/go-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/MegaGrindStone/go-mcp)
