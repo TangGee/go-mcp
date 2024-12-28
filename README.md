@@ -126,11 +126,11 @@ Enhance your server with optional capabilities. Here's an example adding tool su
 ```go
 type secretTooling struct {}
 
-func (secretTooling) ListTools(ctx context.Context, params mcp.ToolsListParams, requestClient mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (secretTooling) ListTools(ctx context.Context, params mcp.ListToolsParams, requestClient mcp.RequestClientFunc) (mcp.ToolList, error) {
     // Your implementation here
 } 
 
-func (secretTooling) CallTool(ctx context.Context, params mcp.ToolsCallParams, requestClient mcp.RequestClientFunc) (mcp.ToolResult, error) {
+func (secretTooling) CallTool(ctx context.Context, params mcp.CallToolParams, requestClient mcp.RequestClientFunc) (mcp.ToolResult, error) {
     // Your implementation here
 }
 
@@ -175,12 +175,12 @@ func (AwesomeMCPServer) RequireSamplingClient() bool {
 
 type secretTooling struct{}
 
-func (secretTooling) ListTools(ctx context.Context, params mcp.ToolsListParams, requestClient mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (secretTooling) ListTools(ctx context.Context, params mcp.ListToolsParams, requestClient mcp.RequestClientFunc) (mcp.ToolList, error) {
     // Your implementation here
     return mcp.ToolList{}, nil
 }
 
-func (secretTooling) CallTool(ctx context.Context, params mcp.ToolsCallParams, requestClient mcp.RequestClientFunc) (mcp.ToolResult, error) {
+func (secretTooling) CallTool(ctx context.Context, params mcp.CallToolParams, requestClient mcp.RequestClientFunc) (mcp.ToolResult, error) {
     // Your implementation here
     return mcp.ToolResult{}, nil
 }

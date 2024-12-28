@@ -53,7 +53,7 @@ func (c client) run() {
 	}
 
 	for {
-		tools, err := c.cli.ListTools(c.ctx, mcp.ToolsListParams{})
+		tools, err := c.cli.ListTools(c.ctx, mcp.ListToolsParams{})
 		if err != nil {
 			fmt.Printf("failed to list tools: %v\n", err)
 			return
@@ -168,7 +168,7 @@ func (c client) callReadFile() bool {
 		"path": input,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "read_file",
 		Arguments: args,
 	}
@@ -204,7 +204,7 @@ func (c client) callReadMultipleFiles() bool {
 		"paths": strings.Split(input, ","),
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "read_multiple_files",
 		Arguments: args,
 	}
@@ -258,7 +258,7 @@ func (c client) callWriteFile() bool {
 		"content": content,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "write_file",
 		Arguments: args,
 	}
@@ -337,7 +337,7 @@ func (c client) callEditFile() bool {
 		"dryRun": false,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "edit_file",
 		Arguments: args,
 	}
@@ -373,7 +373,7 @@ func (c client) callCreateDirectory() bool {
 		"path": input,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "create_directory",
 		Arguments: args,
 	}
@@ -409,7 +409,7 @@ func (c *client) callListDirectory() bool {
 		"path": input,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "list_directory",
 		Arguments: args,
 	}
@@ -447,7 +447,7 @@ func (c client) callDirectoryTree() bool {
 		"path": input,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "directory_tree",
 		Arguments: args,
 	}
@@ -499,7 +499,7 @@ func (c client) callMoveFile() bool {
 		"destination": destination,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "move_file",
 		Arguments: args,
 	}
@@ -560,7 +560,7 @@ func (c client) callSearchFiles() bool {
 		"excludePatterns": excludePatterns,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "search_files",
 		Arguments: args,
 	}
@@ -598,7 +598,7 @@ func (c client) callGetFileInfo() bool {
 		"path": input,
 	}
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name:      "get_file_info",
 		Arguments: args,
 	}

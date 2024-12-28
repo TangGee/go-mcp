@@ -43,7 +43,7 @@ type ServerRequirement struct {
 //	defer client.Close()
 //
 //	// Use client methods...
-//	prompts, err := client.ListPrompts(ctx, PromptsListParams{})
+//	prompts, err := client.ListPrompts(ctx, ListPromptsParams{})
 type Client struct {
 	capabilities               ClientCapabilities
 	info                       Info
@@ -300,9 +300,9 @@ func (c *Client) Connect() error {
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See PromptsListParams for details on available parameters including cursor for pagination
+// See ListPromptsParams for details on available parameters including cursor for pagination
 // and optional progress tracking.
-func (c *Client) ListPrompts(ctx context.Context, params PromptsListParams) (PromptList, error) {
+func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (PromptList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return PromptList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -334,9 +334,9 @@ func (c *Client) ListPrompts(ctx context.Context, params PromptsListParams) (Pro
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See PromptsGetParams for details on available parameters including prompt name,
+// See GetPromptParams for details on available parameters including prompt name,
 // arguments, and optional progress tracking.
-func (c *Client) GetPrompt(ctx context.Context, params PromptsGetParams) (PromptResult, error) {
+func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (PromptResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return PromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -368,9 +368,9 @@ func (c *Client) GetPrompt(ctx context.Context, params PromptsGetParams) (Prompt
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See CompletionCompleteParams for details on available parameters including
+// See CompletesCompletionParams for details on available parameters including
 // completion reference and argument information.
-func (c *Client) CompletesPrompt(ctx context.Context, params CompletionCompleteParams) (CompletionResult, error) {
+func (c *Client) CompletesPrompt(ctx context.Context, params CompletesCompletionParams) (CompletionResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CompletionResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -402,9 +402,9 @@ func (c *Client) CompletesPrompt(ctx context.Context, params CompletionCompleteP
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See ResourcesListParams for details on available parameters including cursor for
+// See ListResourcesParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
-func (c *Client) ListResources(ctx context.Context, params ResourcesListParams) (ResourceList, error) {
+func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) (ResourceList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ResourceList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -436,9 +436,9 @@ func (c *Client) ListResources(ctx context.Context, params ResourcesListParams) 
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See ResourcesReadParams for details on available parameters including resource URI
+// See ReadResourceParams for details on available parameters including resource URI
 // and optional progress tracking.
-func (c *Client) ReadResource(ctx context.Context, params ResourcesReadParams) (Resource, error) {
+func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (Resource, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return Resource{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -470,11 +470,11 @@ func (c *Client) ReadResource(ctx context.Context, params ResourcesReadParams) (
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See ResourcesTemplatesListParams for details on available parameters including
+// See ListResourceTemplatesParams for details on available parameters including
 // optional progress tracking.
 func (c *Client) ListResourceTemplates(
 	ctx context.Context,
-	params ResourcesTemplatesListParams,
+	params ListResourceTemplatesParams,
 ) ([]ResourceTemplate, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -507,11 +507,11 @@ func (c *Client) ListResourceTemplates(
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See CompletionCompleteParams for details on available parameters including
+// See CompletesCompletionParams for details on available parameters including
 // completion reference and argument information.
 func (c *Client) CompletesResourceTemplate(
 	ctx context.Context,
-	params CompletionCompleteParams,
+	params CompletesCompletionParams,
 ) (CompletionResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -602,9 +602,9 @@ func (c *Client) UnsubscribeResource(ctx context.Context, uri string) error {
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See ToolsListParams for details on available parameters including cursor for
+// See ListToolsParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
-func (c *Client) ListTools(ctx context.Context, params ToolsListParams) (ToolList, error) {
+func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ToolList, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ToolList{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -636,9 +636,9 @@ func (c *Client) ListTools(ctx context.Context, params ToolsListParams) (ToolLis
 // The request can be cancelled via the context. When cancelled, a cancellation
 // request will be sent to the server to stop processing.
 //
-// See ToolsCallParams for details on available parameters including tool name,
+// See CallToolParams for details on available parameters including tool name,
 // arguments, and optional progress tracking.
-func (c *Client) CallTool(ctx context.Context, params ToolsCallParams) (ToolResult, error) {
+func (c *Client) CallTool(ctx context.Context, params CallToolParams) (ToolResult, error) {
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ToolResult{}, fmt.Errorf("failed to marshal params: %w", err)

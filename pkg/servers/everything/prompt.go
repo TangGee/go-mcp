@@ -45,7 +45,7 @@ var promptCompletions = map[string][]string{
 }
 
 // ListPrompts implements mcp.PromptServer interface.
-func (s *Server) ListPrompts(context.Context, mcp.PromptsListParams, mcp.RequestClientFunc) (mcp.PromptList, error) {
+func (s *Server) ListPrompts(context.Context, mcp.ListPromptsParams, mcp.RequestClientFunc) (mcp.PromptList, error) {
 	s.log("ListPrompts", mcp.LogLevelDebug)
 
 	s.log(fmt.Sprintf("count prompts: %d", len(promptList.Prompts)), mcp.LogLevelInfo)
@@ -56,7 +56,7 @@ func (s *Server) ListPrompts(context.Context, mcp.PromptsListParams, mcp.Request
 // GetPrompt implements mcp.PromptServer interface.
 func (s *Server) GetPrompt(
 	_ context.Context,
-	params mcp.PromptsGetParams,
+	params mcp.GetPromptParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.PromptResult, error) {
 	s.log(fmt.Sprintf("GetPrompt: %s", params.Name), mcp.LogLevelDebug)
@@ -126,7 +126,7 @@ I understand. You've provided a complex prompt with temperature and style argume
 // CompletesPrompt implements mcp.PromptServer interface.
 func (s *Server) CompletesPrompt(
 	_ context.Context,
-	params mcp.CompletionCompleteParams,
+	params mcp.CompletesCompletionParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.CompletionResult, error) {
 	s.log(fmt.Sprintf("CompletesPrompt: %s", params.Ref.Name), mcp.LogLevelDebug)

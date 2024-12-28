@@ -49,7 +49,7 @@ func (m mockServer) RequireSamplingClient() bool {
 
 func (m mockPromptServer) ListPrompts(
 	_ context.Context,
-	params mcp.PromptsListParams,
+	params mcp.ListPromptsParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.PromptList, error) {
 	startIndex, endIndex, nextCursor := getPageInfo(params.Cursor, m.pageSize, len(m.prompts))
@@ -61,7 +61,7 @@ func (m mockPromptServer) ListPrompts(
 
 func (m mockPromptServer) GetPrompt(
 	_ context.Context,
-	params mcp.PromptsGetParams,
+	params mcp.GetPromptParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.PromptResult, error) {
 	idx := slices.IndexFunc(m.prompts, func(p mcp.Prompt) bool {
@@ -86,7 +86,7 @@ func (m mockPromptServer) GetPrompt(
 
 func (m mockPromptServer) CompletesPrompt(
 	context.Context,
-	mcp.CompletionCompleteParams,
+	mcp.CompletesCompletionParams,
 	mcp.RequestClientFunc,
 ) (mcp.CompletionResult, error) {
 	return mcp.CompletionResult{
@@ -106,7 +106,7 @@ func (m mockPromptListUpdater) PromptListUpdates() <-chan struct{} {
 
 func (m mockResourceServer) ListResources(
 	context.Context,
-	mcp.ResourcesListParams,
+	mcp.ListResourcesParams,
 	mcp.RequestClientFunc,
 ) (mcp.ResourceList, error) {
 	return mcp.ResourceList{
@@ -131,7 +131,7 @@ func (m mockResourceServer) ListResources(
 
 func (m mockResourceServer) ReadResource(
 	context.Context,
-	mcp.ResourcesReadParams,
+	mcp.ReadResourceParams,
 	mcp.RequestClientFunc,
 ) (mcp.Resource, error) {
 	return mcp.Resource{
@@ -145,7 +145,7 @@ func (m mockResourceServer) ReadResource(
 
 func (m mockResourceServer) ListResourceTemplates(
 	context.Context,
-	mcp.ResourcesTemplatesListParams,
+	mcp.ListResourceTemplatesParams,
 	mcp.RequestClientFunc,
 ) ([]mcp.ResourceTemplate, error) {
 	return []mcp.ResourceTemplate{
@@ -166,7 +166,7 @@ func (m mockResourceServer) ListResourceTemplates(
 
 func (m mockResourceServer) CompletesResourceTemplate(
 	context.Context,
-	mcp.CompletionCompleteParams,
+	mcp.CompletesCompletionParams,
 	mcp.RequestClientFunc,
 ) (mcp.CompletionResult, error) {
 	return mcp.CompletionResult{}, nil
@@ -186,7 +186,7 @@ func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() <-chan string
 	return nil
 }
 
-func (m mockToolServer) ListTools(context.Context, mcp.ToolsListParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (m mockToolServer) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
 	return mcp.ToolList{
 		Tools: []mcp.Tool{
 			{
@@ -203,7 +203,7 @@ func (m mockToolServer) ListTools(context.Context, mcp.ToolsListParams, mcp.Requ
 	}, nil
 }
 
-func (m mockToolServer) CallTool(context.Context, mcp.ToolsCallParams, mcp.RequestClientFunc) (mcp.ToolResult, error) {
+func (m mockToolServer) CallTool(context.Context, mcp.CallToolParams, mcp.RequestClientFunc) (mcp.ToolResult, error) {
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{

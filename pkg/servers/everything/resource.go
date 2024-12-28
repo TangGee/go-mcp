@@ -47,7 +47,7 @@ func genResources() []mcp.Resource {
 // ListResources implements mcp.ResourceServer interface.
 func (s *Server) ListResources(
 	_ context.Context,
-	params mcp.ResourcesListParams,
+	params mcp.ListResourcesParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.ResourceList, error) {
 	s.log(fmt.Sprintf("ListResources: %s", params.Cursor), mcp.LogLevelDebug)
@@ -76,7 +76,7 @@ func (s *Server) ListResources(
 // ReadResource implements mcp.ResourceServer interface.
 func (s *Server) ReadResource(
 	_ context.Context,
-	params mcp.ResourcesReadParams,
+	params mcp.ReadResourceParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.Resource, error) {
 	s.log(fmt.Sprintf("ReadResource: %s", params.URI), mcp.LogLevelDebug)
@@ -101,7 +101,7 @@ func (s *Server) ReadResource(
 // ListResourceTemplates implements mcp.ResourceServer interface.
 func (s *Server) ListResourceTemplates(
 	_ context.Context,
-	_ mcp.ResourcesTemplatesListParams,
+	_ mcp.ListResourceTemplatesParams,
 	_ mcp.RequestClientFunc,
 ) ([]mcp.ResourceTemplate, error) {
 	s.log("ListResourceTemplates", mcp.LogLevelDebug)
@@ -118,7 +118,7 @@ func (s *Server) ListResourceTemplates(
 // CompletesResourceTemplate implements mcp.ResourceServer interface.
 func (s *Server) CompletesResourceTemplate(
 	_ context.Context,
-	params mcp.CompletionCompleteParams,
+	params mcp.CompletesCompletionParams,
 	_ mcp.RequestClientFunc,
 ) (mcp.CompletionResult, error) {
 	s.log(fmt.Sprintf("CompletesResourceTemplate: %s", params.Ref.Name), mcp.LogLevelDebug)

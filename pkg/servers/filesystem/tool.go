@@ -203,7 +203,7 @@ without reading the actual content. Only works within allowed directories.
 	},
 }
 
-func readFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func readFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := readFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -242,7 +242,7 @@ func readFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) 
 	}, nil
 }
 
-func readMultipleFiles(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func readMultipleFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := readMultipleFilesSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -293,7 +293,7 @@ func readMultipleFiles(ctx context.Context, rootPath string, params mcp.ToolsCal
 	}, nil
 }
 
-func writeFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func writeFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := writeFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -325,7 +325,7 @@ func writeFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams)
 	}, nil
 }
 
-func editFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func editFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := editFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -387,7 +387,7 @@ func editFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) 
 	}, nil
 }
 
-func createDirectory(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func createDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := createDirectorySchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -417,7 +417,7 @@ func createDirectory(ctx context.Context, rootPath string, params mcp.ToolsCallP
 	}, nil
 }
 
-func listDirectory(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func listDirectory(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := listDirectorySchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -459,7 +459,7 @@ func listDirectory(ctx context.Context, rootPath string, params mcp.ToolsCallPar
 	}, nil
 }
 
-func directoryTree(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func directoryTree(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := directoryTreeSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -502,7 +502,7 @@ func directoryTree(ctx context.Context, rootPath string, params mcp.ToolsCallPar
 	}, nil
 }
 
-func moveFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func moveFile(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := moveFileSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -535,7 +535,7 @@ func moveFile(ctx context.Context, rootPath string, params mcp.ToolsCallParams) 
 	}, nil
 }
 
-func searchFiles(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func searchFiles(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := searchFilesSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -609,7 +609,7 @@ func searchFiles(ctx context.Context, rootPath string, params mcp.ToolsCallParam
 	}, nil
 }
 
-func getFileInfo(ctx context.Context, rootPath string, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func getFileInfo(ctx context.Context, rootPath string, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := getFileInfoSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {

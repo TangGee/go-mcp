@@ -560,7 +560,7 @@ func (s server) handlePromptMessages(sess *session, msg JSONRPCMessage) error {
 
 	switch msg.Method {
 	case MethodPromptsList:
-		var params PromptsListParams
+		var params ListPromptsParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -570,7 +570,7 @@ func (s server) handlePromptMessages(sess *session, msg JSONRPCMessage) error {
 		go sess.handlePromptsList(msg.ID, params, s.promptServer)
 		return nil
 	case MethodPromptsGet:
-		var params PromptsGetParams
+		var params GetPromptParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -590,7 +590,7 @@ func (s server) handleResourceMessages(sess *session, msg JSONRPCMessage) error 
 
 	switch msg.Method {
 	case MethodResourcesList:
-		var params ResourcesListParams
+		var params ListResourcesParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -600,7 +600,7 @@ func (s server) handleResourceMessages(sess *session, msg JSONRPCMessage) error 
 		go sess.handleResourcesList(msg.ID, params, s.resourceServer)
 		return nil
 	case MethodResourcesRead:
-		var params ResourcesReadParams
+		var params ReadResourceParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -610,7 +610,7 @@ func (s server) handleResourceMessages(sess *session, msg JSONRPCMessage) error 
 		go sess.handleResourcesRead(msg.ID, params, s.resourceServer)
 		return nil
 	case MethodResourcesTemplatesList:
-		var params ResourcesTemplatesListParams
+		var params ListResourceTemplatesParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -644,7 +644,7 @@ func (s server) handleToolMessages(sess *session, msg JSONRPCMessage) error {
 
 	switch msg.Method {
 	case MethodToolsList:
-		var params ToolsListParams
+		var params ListToolsParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -654,7 +654,7 @@ func (s server) handleToolMessages(sess *session, msg JSONRPCMessage) error {
 		go sess.handleToolsList(msg.ID, params, s.toolServer)
 		return nil
 	case MethodToolsCall:
-		var params ToolsCallParams
+		var params CallToolParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {
 			return errInvalidJSON
 		}
@@ -672,7 +672,7 @@ func (s server) handleCompletionMessages(sess *session, msg JSONRPCMessage) erro
 		return nil
 	}
 
-	var params CompletionCompleteParams
+	var params CompletesCompletionParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
 		return errInvalidJSON
 	}
@@ -854,7 +854,7 @@ func (s *session) handleInitialize(
 
 func (s *session) handlePromptsList(
 	msgID MustString,
-	params PromptsListParams,
+	params ListPromptsParams,
 	server PromptServer,
 ) {
 	if !s.isInitialized() {
@@ -885,7 +885,7 @@ func (s *session) handlePromptsList(
 
 func (s *session) handlePromptsGet(
 	msgID MustString,
-	params PromptsGetParams,
+	params GetPromptParams,
 	server PromptServer,
 ) {
 	if !s.isInitialized() {
@@ -916,7 +916,7 @@ func (s *session) handlePromptsGet(
 
 func (s *session) handleCompletePrompt(
 	msgID MustString,
-	params CompletionCompleteParams,
+	params CompletesCompletionParams,
 	server PromptServer,
 ) {
 	if !s.isInitialized() {
@@ -947,7 +947,7 @@ func (s *session) handleCompletePrompt(
 
 func (s *session) handleResourcesList(
 	msgID MustString,
-	params ResourcesListParams,
+	params ListResourcesParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {
@@ -978,7 +978,7 @@ func (s *session) handleResourcesList(
 
 func (s *session) handleResourcesRead(
 	msgID MustString,
-	params ResourcesReadParams,
+	params ReadResourceParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {
@@ -1009,7 +1009,7 @@ func (s *session) handleResourcesRead(
 
 func (s *session) handleResourcesListTemplates(
 	msgID MustString,
-	params ResourcesTemplatesListParams,
+	params ListResourceTemplatesParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {
@@ -1086,7 +1086,7 @@ func (s *session) handleResourcesUnsubscribe(
 
 func (s *session) handleCompleteResource(
 	msgID MustString,
-	params CompletionCompleteParams,
+	params CompletesCompletionParams,
 	server ResourceServer,
 ) {
 	if !s.isInitialized() {
@@ -1117,7 +1117,7 @@ func (s *session) handleCompleteResource(
 
 func (s *session) handleToolsList(
 	msgID MustString,
-	params ToolsListParams,
+	params ListToolsParams,
 	server ToolServer,
 ) {
 	if !s.isInitialized() {
@@ -1146,7 +1146,7 @@ func (s *session) handleToolsList(
 	s.sendResult(msgID, ts)
 }
 
-func (s *session) handleToolsCall(msgID MustString, params ToolsCallParams, server ToolServer) {
+func (s *session) handleToolsCall(msgID MustString, params CallToolParams, server ToolServer) {
 	if !s.isInitialized() {
 		return
 	}

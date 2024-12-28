@@ -79,16 +79,16 @@ type ClientTransport interface {
 type PromptServer interface {
 	// ListPrompts returns a paginated list of available prompts.
 	// Returns error if operation fails or context is cancelled.
-	ListPrompts(ctx context.Context, params PromptsListParams, requestClient RequestClientFunc) (PromptList, error)
+	ListPrompts(ctx context.Context, params ListPromptsParams, requestClient RequestClientFunc) (PromptList, error)
 
 	// GetPrompt retrieves a specific prompt template by name with the given arguments.
 	// Returns error if prompt not found, arguments are invalid, or context is cancelled.
-	GetPrompt(ctx context.Context, params PromptsGetParams, requestClient RequestClientFunc) (PromptResult, error)
+	GetPrompt(ctx context.Context, params GetPromptParams, requestClient RequestClientFunc) (PromptResult, error)
 
 	// CompletesPrompt provides completion suggestions for a prompt argument.
 	// Used to implement interactive argument completion in clients.
 	// Returns error if prompt doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesPrompt(ctx context.Context, params CompletionCompleteParams,
+	CompletesPrompt(ctx context.Context, params CompletesCompletionParams,
 		requestClient RequestClientFunc) (CompletionResult, error)
 }
 
@@ -115,20 +115,20 @@ type PromptListUpdater interface {
 type ResourceServer interface {
 	// ListResources returns a paginated list of available resources.
 	// Returns error if operation fails or context is cancelled.
-	ListResources(ctx context.Context, params ResourcesListParams, requestClient RequestClientFunc) (ResourceList, error)
+	ListResources(ctx context.Context, params ListResourcesParams, requestClient RequestClientFunc) (ResourceList, error)
 
 	// ReadResource retrieves a specific resource by its URI.
 	// Returns error if resource not found, cannot be read, or context is cancelled.
-	ReadResource(ctx context.Context, params ResourcesReadParams, requestClient RequestClientFunc) (Resource, error)
+	ReadResource(ctx context.Context, params ReadResourceParams, requestClient RequestClientFunc) (Resource, error)
 
 	// ListResourceTemplates returns all available resource templates.
 	// Returns error if templates cannot be retrieved or context is cancelled.
-	ListResourceTemplates(ctx context.Context, params ResourcesTemplatesListParams,
+	ListResourceTemplates(ctx context.Context, params ListResourceTemplatesParams,
 		requestClient RequestClientFunc) ([]ResourceTemplate, error)
 
 	// CompletesResourceTemplate provides completion suggestions for a resource template argument.
 	// Returns error if template doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesResourceTemplate(ctx context.Context, params CompletionCompleteParams,
+	CompletesResourceTemplate(ctx context.Context, params CompletesCompletionParams,
 		requestClient RequestClientFunc) (CompletionResult, error)
 
 	// SubscribeResource registers interest in a specific resource URI.
@@ -175,11 +175,11 @@ type ResourceSubscribedUpdater interface {
 type ToolServer interface {
 	// ListTools returns a paginated list of available tools.
 	// Returns error if operation fails or context is cancelled.
-	ListTools(ctx context.Context, params ToolsListParams, requestClient RequestClientFunc) (ToolList, error)
+	ListTools(ctx context.Context, params ListToolsParams, requestClient RequestClientFunc) (ToolList, error)
 
 	// CallTool executes a specific tool with the given arguments.
 	// Returns error if tool not found, arguments are invalid, execution fails, or context is cancelled.
-	CallTool(ctx context.Context, params ToolsCallParams, requestClient RequestClientFunc) (ToolResult, error)
+	CallTool(ctx context.Context, params CallToolParams, requestClient RequestClientFunc) (ToolResult, error)
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
@@ -394,8 +394,8 @@ type Info struct {
 // during JSON marshaling/unmarshaling.
 type MustString string
 
-// PromptsListParams contains parameters for listing available prompts.
-type PromptsListParams struct {
+// ListPromptsParams contains parameters for listing available prompts.
+type ListPromptsParams struct {
 	// Cursor is an optional pagination cursor from previous ListPrompts call.
 	// Empty string requests the first page.
 	Cursor string `json:"cursor"`
@@ -407,8 +407,8 @@ type PromptsListParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// PromptsGetParams contains parameters for retrieving a specific prompt.
-type PromptsGetParams struct {
+// GetPromptParams contains parameters for retrieving a specific prompt.
+type GetPromptParams struct {
 	// Name is the unique identifier of the prompt to retrieve
 	Name string `json:"name"`
 
@@ -461,8 +461,8 @@ type PromptMessage struct {
 // PromptRole represents the role in a conversation (user or assistant).
 type PromptRole string
 
-// ResourcesListParams contains parameters for listing available resources.
-type ResourcesListParams struct {
+// ListResourcesParams contains parameters for listing available resources.
+type ListResourcesParams struct {
 	// Cursor is a pagination cursor from previous ListResources call.
 	// Empty string requests the first page.
 	Cursor string `json:"cursor"`
@@ -472,8 +472,8 @@ type ResourcesListParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// ResourcesReadParams contains parameters for retrieving a specific resource.
-type ResourcesReadParams struct {
+// ReadResourceParams contains parameters for retrieving a specific resource.
+type ReadResourceParams struct {
 	// URI is the unique identifier of the resource to retrieve.
 	URI string `json:"uri"`
 
@@ -482,8 +482,8 @@ type ResourcesReadParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// ResourcesTemplatesListParams contains parameters for listing available resource templates.
-type ResourcesTemplatesListParams struct {
+// ListResourceTemplatesParams contains parameters for listing available resource templates.
+type ListResourceTemplatesParams struct {
 	// Meta contains optional metadata including progressToken for tracking operation progress.
 	// The progressToken is used by ProgressReporter to emit progress updates if supported.
 	Meta ParamsMeta `json:"_meta,omitempty"`
@@ -523,8 +523,8 @@ type ResourceTemplate struct {
 	MimeType    string `json:"mimeType,omitempty"`
 }
 
-// ToolsListParams contains parameters for listing available tools.
-type ToolsListParams struct {
+// ListToolsParams contains parameters for listing available tools.
+type ListToolsParams struct {
 	// Cursor is a pagination cursor from previous ListTools call.
 	// Empty string requests the first page.
 	Cursor string `json:"cursor"`
@@ -536,8 +536,8 @@ type ToolsListParams struct {
 	Meta ParamsMeta `json:"_meta,omitempty"`
 }
 
-// ToolsCallParams contains parameters for executing a specific tool.
-type ToolsCallParams struct {
+// CallToolParams contains parameters for executing a specific tool.
+type CallToolParams struct {
 	// Name is the unique identifier of the tool to execute
 	Name string `json:"name"`
 
@@ -574,21 +574,21 @@ type ToolResult struct {
 	IsError bool      `json:"isError"`
 }
 
-// CompletionCompleteParams contains parameters for requesting completion suggestions.
+// CompletesCompletionParams contains parameters for requesting completion suggestions.
 // It includes a reference to what is being completed (e.g. a prompt or resource template)
 // and the specific argument that needs completion suggestions.
-type CompletionCompleteParams struct {
+type CompletesCompletionParams struct {
 	// Ref identifies what is being completed (e.g. prompt, resource template)
-	Ref CompletionCompleteRef `json:"ref"`
+	Ref CompletionRef `json:"ref"`
 	// Argument specifies which argument needs completion suggestions
 	Argument CompletionArgument `json:"argument"`
 }
 
-// CompletionCompleteRef identifies what is being completed in a completion request.
+// CompletionRef identifies what is being completed in a completion request.
 // Type must be one of:
 //   - "ref/prompt": Completing a prompt argument, Name field must be set to prompt name
 //   - "ref/resource": Completing a resource template argument, URI field must be set to template URI
-type CompletionCompleteRef struct {
+type CompletionRef struct {
 	// Type specifies what kind of completion is being requested.
 	// Must be either "ref/prompt" or "ref/resource".
 	Type string `json:"type"`
@@ -865,9 +865,9 @@ const (
 	// MethodLoggingSetLevel is the method name for setting the minimum severity level for emitted log messages.
 	MethodLoggingSetLevel = "logging/setLevel"
 
-	// CompletionRefPrompt is used in CompletionCompleteRef.Type for prompt argument completion.
+	// CompletionRefPrompt is used in CompletionRef.Type for prompt argument completion.
 	CompletionRefPrompt = "ref/prompt"
-	// CompletionRefResource is used in CompletionCompleteRef.Type for resource template argument completion.
+	// CompletionRefResource is used in CompletionRef.Type for resource template argument completion.
 	CompletionRefResource = "ref/resource"
 
 	protocolVersion = "2024-11-05"

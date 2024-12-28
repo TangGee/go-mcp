@@ -76,7 +76,7 @@ var toolList = []mcp.Tool{
 }
 
 // ListTools implements mcp.ToolServer interface.
-func (s *Server) ListTools(context.Context, mcp.ToolsListParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
+func (s *Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ToolList, error) {
 	s.log("ListTools", mcp.LogLevelDebug)
 
 	return mcp.ToolList{
@@ -87,7 +87,7 @@ func (s *Server) ListTools(context.Context, mcp.ToolsListParams, mcp.RequestClie
 // CallTool implements mcp.ToolServer interface.
 func (s *Server) CallTool(
 	ctx context.Context,
-	params mcp.ToolsCallParams,
+	params mcp.CallToolParams,
 	requestClient mcp.RequestClientFunc,
 ) (mcp.ToolResult, error) {
 	s.log(fmt.Sprintf("CallTool: %s", params.Name), mcp.LogLevelDebug)
@@ -110,7 +110,7 @@ func (s *Server) CallTool(
 	}
 }
 
-func (s *Server) callEcho(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callEcho(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := echoSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -134,7 +134,7 @@ func (s *Server) callEcho(ctx context.Context, params mcp.ToolsCallParams) (mcp.
 	}, nil
 }
 
-func (s *Server) callAdd(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := addSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -161,7 +161,7 @@ func (s *Server) callAdd(ctx context.Context, params mcp.ToolsCallParams) (mcp.T
 	}, nil
 }
 
-func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallToolParams) (mcp.ToolResult, error) {
 	vs := longRunningOperationSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -207,7 +207,7 @@ func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.ToolsC
 	}, nil
 }
 
-func (s *Server) callPrintEnv(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callPrintEnv(_ context.Context, _ mcp.CallToolParams) (mcp.ToolResult, error) {
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{
@@ -221,7 +221,7 @@ func (s *Server) callPrintEnv(_ context.Context, _ mcp.ToolsCallParams) (mcp.Too
 
 func (s *Server) callSampleLLM(
 	ctx context.Context,
-	params mcp.ToolsCallParams,
+	params mcp.CallToolParams,
 	requestClient mcp.RequestClientFunc,
 ) (mcp.ToolResult, error) {
 	vs := sampleLLMSchema.Validate(ctx, params.Arguments)
@@ -287,7 +287,7 @@ func (s *Server) callSampleLLM(
 	}, nil
 }
 
-func (s *Server) callGetTinyImage(_ context.Context, _ mcp.ToolsCallParams) (mcp.ToolResult, error) {
+func (s *Server) callGetTinyImage(_ context.Context, _ mcp.CallToolParams) (mcp.ToolResult, error) {
 	return mcp.ToolResult{
 		Content: []mcp.Content{
 			{

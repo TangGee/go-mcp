@@ -147,7 +147,7 @@ func (c *client) run() {
 }
 
 func (c *client) runPrompts() bool {
-	listPrompts, err := c.cli.ListPrompts(c.ctx, mcp.PromptsListParams{})
+	listPrompts, err := c.cli.ListPrompts(c.ctx, mcp.ListPromptsParams{})
 	if err != nil {
 		log.Printf("failed to list prompts: %v", err)
 		return true
@@ -186,7 +186,7 @@ func (c *client) runPrompts() bool {
 	}
 	prompt := listPrompts.Prompts[promptIdx]
 
-	params := mcp.PromptsGetParams{
+	params := mcp.GetPromptParams{
 		Name: prompt.Name,
 	}
 	if prompt.Name == "complex-prompt" {
@@ -235,23 +235,23 @@ func (c *client) runPrompts() bool {
 	return false
 }
 
-func (c *client) runComplexPrompt() (mcp.PromptsGetParams, bool) {
+func (c *client) runComplexPrompt() (mcp.GetPromptParams, bool) {
 	fmt.Println(`
 Pardon the implementation of 'autocomplete' in this example, but it's a good idea to implement it in your own client.`)
 
 	temperature, exit := c.runPromptAutocomplete("temperature")
 	if exit {
-		return mcp.PromptsGetParams{}, true
+		return mcp.GetPromptParams{}, true
 	}
 	style, exit := c.runPromptAutocomplete("style")
 	if exit {
-		return mcp.PromptsGetParams{}, true
+		return mcp.GetPromptParams{}, true
 	}
 
 	fmt.Printf("Temperature: %s\n", temperature)
 	fmt.Printf("Style: %s\n", style)
 
-	return mcp.PromptsGetParams{
+	return mcp.GetPromptParams{
 		Name:      "complex-prompt",
 		Arguments: map[string]string{"temperature": temperature, "style": style},
 	}, false
@@ -274,8 +274,8 @@ func (c *client) runPromptAutocomplete(field string) (string, bool) {
 			return "", true
 		}
 
-		params := mcp.CompletionCompleteParams{
-			Ref: mcp.CompletionCompleteRef{
+		params := mcp.CompletesCompletionParams{
+			Ref: mcp.CompletionRef{
 				Type: mcp.CompletionRefPrompt,
 				Name: "complex-prompt",
 			},
@@ -317,7 +317,7 @@ Your input is not found in the list of possible completions, input an empty stri
 func (c *client) runResources() bool {
 	cursor := ""
 	for {
-		params := mcp.ResourcesListParams{
+		params := mcp.ListResourcesParams{
 			Cursor: cursor,
 		}
 		listResources, err := c.cli.ListResources(c.ctx, params)
@@ -390,7 +390,7 @@ func (c *client) runResources() bool {
 			return false
 		}
 
-		readResourceParams := mcp.ResourcesReadParams{
+		readResourceParams := mcp.ReadResourceParams{
 			URI: resource.URI,
 		}
 		rs, err := c.cli.ReadResource(c.ctx, readResourceParams)
@@ -429,7 +429,7 @@ func (c *client) runResources() bool {
 
 //nolint:funlen
 func (c *client) runTools() bool {
-	listToolsParams := mcp.ToolsListParams{
+	listToolsParams := mcp.ListToolsParams{
 		Cursor: "",
 	}
 	listTools, err := c.cli.ListTools(c.ctx, listToolsParams)
@@ -471,7 +471,7 @@ func (c *client) runTools() bool {
 	}
 	tool := listTools.Tools[toolIdx]
 
-	params := mcp.ToolsCallParams{
+	params := mcp.CallToolParams{
 		Name: tool.Name,
 	}
 	var exit bool
@@ -536,20 +536,20 @@ func (c *client) runTools() bool {
 	return false
 }
 
-func (c *client) toolEchoParams() (mcp.ToolsCallParams, bool) {
+func (c *client) toolEchoParams() (mcp.CallToolParams, bool) {
 	for {
 		fmt.Println("Enter the message to echo:")
 
 		input, err := c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
-				return mcp.ToolsCallParams{}, true
+				return mcp.CallToolParams{}, true
 			}
 			fmt.Print(err)
 			continue
 		}
 
-		return mcp.ToolsCallParams{
+		return mcp.CallToolParams{
 			Name: "echo",
 			Arguments: map[string]any{
 				"message": input,
@@ -558,14 +558,14 @@ func (c *client) toolEchoParams() (mcp.ToolsCallParams, bool) {
 	}
 }
 
-func (c *client) toolAddParams() (mcp.ToolsCallParams, bool) {
+func (c *client) toolAddParams() (mcp.CallToolParams, bool) {
 	for {
 		fmt.Println("Enter two numbers to add (separated by space):")
 
 		input, err := c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
-				return mcp.ToolsCallParams{}, true
+				return mcp.CallToolParams{}, true
 			}
 			fmt.Print(err)
 			continue
@@ -588,7 +588,7 @@ func (c *client) toolAddParams() (mcp.ToolsCallParams, bool) {
 			continue
 		}
 
-		return mcp.ToolsCallParams{
+		return mcp.CallToolParams{
 			Name: "add",
 			Arguments: map[string]any{
 				"a": a,
@@ -598,14 +598,14 @@ func (c *client) toolAddParams() (mcp.ToolsCallParams, bool) {
 	}
 }
 
-func (c *client) toolLongRunningOperationParams() (mcp.ToolsCallParams, bool) {
+func (c *client) toolLongRunningOperationParams() (mcp.CallToolParams, bool) {
 	for {
 		fmt.Println("Enter duration and steps (separated by space):")
 
 		input, err := c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
-				return mcp.ToolsCallParams{}, true
+				return mcp.CallToolParams{}, true
 			}
 			fmt.Print(err)
 			continue
@@ -629,7 +629,7 @@ func (c *client) toolLongRunningOperationParams() (mcp.ToolsCallParams, bool) {
 			continue
 		}
 
-		return mcp.ToolsCallParams{
+		return mcp.CallToolParams{
 			Name: "longRunningOperation",
 			Arguments: map[string]any{
 				"duration": duration,
@@ -642,14 +642,14 @@ func (c *client) toolLongRunningOperationParams() (mcp.ToolsCallParams, bool) {
 	}
 }
 
-func (c *client) toolSampleLLMParams() (mcp.ToolsCallParams, bool) {
+func (c *client) toolSampleLLMParams() (mcp.CallToolParams, bool) {
 	for {
 		fmt.Println("Enter the prompt:")
 
 		input, err := c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
-				return mcp.ToolsCallParams{}, true
+				return mcp.CallToolParams{}, true
 			}
 			fmt.Print(err)
 			continue
@@ -662,7 +662,7 @@ func (c *client) toolSampleLLMParams() (mcp.ToolsCallParams, bool) {
 		input, err = c.waitStdIOInput()
 		if err != nil {
 			if errors.Is(err, os.ErrClosed) {
-				return mcp.ToolsCallParams{}, true
+				return mcp.CallToolParams{}, true
 			}
 			fmt.Print(err)
 			continue
@@ -674,7 +674,7 @@ func (c *client) toolSampleLLMParams() (mcp.ToolsCallParams, bool) {
 			continue
 		}
 
-		return mcp.ToolsCallParams{
+		return mcp.CallToolParams{
 			Name: "sampleLLM",
 			Arguments: map[string]any{
 				"prompt":    prompt,
