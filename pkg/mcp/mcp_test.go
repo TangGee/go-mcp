@@ -112,7 +112,9 @@ func TestInitialize(t *testing.T) {
 				var serverTransport mcp.ServerTransport
 				var clientTransport mcp.ClientTransport
 				if i == 0 {
-					serverTransport, clientTransport = setupSSE()
+					var httpSrv *httptest.Server
+					serverTransport, clientTransport, httpSrv = setupSSE()
+					defer httpSrv.Close()
 				} else {
 					serverTransport, clientTransport = setupStdIO()
 				}
@@ -220,7 +222,9 @@ func TestPrompt(t *testing.T) {
 				var serverTransport mcp.ServerTransport
 				var clientTransport mcp.ClientTransport
 				if i == 0 {
-					serverTransport, clientTransport = setupSSE()
+					var httpSrv *httptest.Server
+					serverTransport, clientTransport, httpSrv = setupSSE()
+					defer httpSrv.Close()
 				} else {
 					serverTransport, clientTransport = setupStdIO()
 				}
@@ -295,6 +299,24 @@ func TestResource(t *testing.T) {
 			},
 		},
 		{
+			name: "listTemplates",
+			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
+				_, err := cli.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
+					Meta: mcp.ParamsMeta{
+						ProgressToken: "progressToken",
+					},
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				if mockRs.listTemplatesParams.Meta.ProgressToken != "progressToken" {
+					t.Errorf("expected progressToken progressToken, got %s", mockRs.listTemplatesParams.Meta.ProgressToken)
+				}
+			},
+		},
+		{
 			name: "completes",
 			testFunc: func(t *testing.T, cli *mcp.Client, mockRs *mockResourceServer) {
 				_, err := cli.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
@@ -360,7 +382,9 @@ func TestResource(t *testing.T) {
 				var serverTransport mcp.ServerTransport
 				var clientTransport mcp.ClientTransport
 				if i == 0 {
-					serverTransport, clientTransport = setupSSE()
+					var httpSrv *httptest.Server
+					serverTransport, clientTransport, httpSrv = setupSSE()
+					defer httpSrv.Close()
 				} else {
 					serverTransport, clientTransport = setupStdIO()
 				}
@@ -449,7 +473,9 @@ func TestTool(t *testing.T) {
 				var serverTransport mcp.ServerTransport
 				var clientTransport mcp.ClientTransport
 				if i == 0 {
-					serverTransport, clientTransport = setupSSE()
+					var httpSrv *httptest.Server
+					serverTransport, clientTransport, httpSrv = setupSSE()
+					defer httpSrv.Close()
 				} else {
 					serverTransport, clientTransport = setupStdIO()
 				}
@@ -484,7 +510,7 @@ func TestTool(t *testing.T) {
 	}
 }
 
-func setupSSE() (mcp.SSEServer, *mcp.SSEClient) {
+func setupSSE() (mcp.SSEServer, *mcp.SSEClient, *httptest.Server) {
 	srv := mcp.NewSSEServer()
 
 	mux := http.NewServeMux()
@@ -497,7 +523,7 @@ func setupSSE() (mcp.SSEServer, *mcp.SSEClient) {
 
 	cli := mcp.NewSSEClient(baseURL, httpSrv.Client())
 
-	return srv, cli
+	return srv, cli, httpSrv
 }
 
 func setupStdIO() (mcp.StdIO, mcp.StdIO) {
