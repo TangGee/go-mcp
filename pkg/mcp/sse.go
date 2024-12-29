@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,10 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/tmaxmax/go-sse"
 )
 
 // SSEServer implements a Server-Sent Events (SSE) server that manages client connections
@@ -98,7 +97,7 @@ func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
 	errs := make(chan error)
 
 	go func() {
-		_, err = fmt.Fprintf(wr, "message: %s\n\n", msgBs)
+		_, err = fmt.Fprintf(wr, "event: message\ndata: %s\n\n", msgBs)
 		if err != nil {
 			errs <- fmt.Errorf("failed to write message: %w", err)
 			return
@@ -165,7 +164,7 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		s.writers.Store(sessID, w)
 
 		url := fmt.Sprintf("%s?sessionID=%s", messageBaseURL, sessID)
-		_, err := fmt.Fprintf(w, "endpoint: %s\n\n", url)
+		_, err := fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", url)
 		if err != nil {
 			nErr := fmt.Errorf("failed to write SSE URL: %w", err)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
@@ -295,36 +294,12 @@ func (s *SSEClient) StartSession() (string, error) {
 		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Read the first SSE event which contains the message URL
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "endpoint: ") {
-			s.messageURL = strings.TrimSpace(strings.TrimPrefix(line, "endpoint: "))
-			break
-		}
-	}
-	if s.messageURL == "" {
-		resp.Body.Close()
-		return "", fmt.Errorf("failed to read message URL from SSE event")
-	}
+	session := make(chan sessionResponse)
 
-	// Parse the session ID from the message URL
-	parsedURL, err := url.Parse(s.messageURL)
-	if err != nil {
-		resp.Body.Close()
-		return "", fmt.Errorf("invalid message URL: %w", err)
-	}
+	go s.listenMessages(resp.Body, session)
 
-	sessID := parsedURL.Query().Get("sessionID")
-	if sessID == "" {
-		resp.Body.Close()
-		return "", fmt.Errorf("no session ID in message URL")
-	}
-
-	go s.listenMessages(sessID, resp.Body)
-
-	return sessID, nil
+	sessionResp := <-session
+	return sessionResp.sessionID, sessionResp.err
 }
 
 // SessionMessages returns a receive-only channel that provides incoming messages
@@ -350,48 +325,80 @@ func (s *SSEClient) Close() {
 	close(s.closeChan)
 }
 
-func (s *SSEClient) listenMessages(sessID string, body io.ReadCloser) {
-	defer body.Close()
+type sessionResponse struct {
+	sessionID string
+	err       error
+}
 
-	scanner := bufio.NewScanner(body)
-	for scanner.Scan() {
+func (s *SSEClient) listenMessages(body io.ReadCloser, session chan<- sessionResponse) {
+	defer body.Close()
+	defer close(session)
+
+	var sessID string
+
+	for ev, err := range sse.Read(body, nil) {
 		select {
 		case <-s.closeChan:
+			if sessID == "" {
+				session <- sessionResponse{err: fmt.Errorf("failed to initialize session: client closed")}
+			}
 			return
 		default:
 		}
 
-		line := scanner.Text()
-		if line == "" {
-			// Skip empty lines
-			continue
-		}
-		var input string
-		if strings.HasPrefix(line, "message: ") {
-			input = strings.TrimSpace(strings.TrimPrefix(line, "message: "))
-		}
-
-		var msg JSONRPCMessage
-		if err := json.Unmarshal([]byte(input), &msg); err != nil {
-			s.logError(fmt.Errorf("failed to unmarshal message: %w", err))
-			continue
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				s.logError(fmt.Errorf("failed to read SSE events: %w", err))
+			}
+			if sessID == "" {
+				session <- sessionResponse{err: fmt.Errorf("failed to initialize session: %w", err)}
+			}
+			return
 		}
 
-		errs := make(chan error)
-		s.messagesChan <- SessionMsgWithErrs{
-			SessionID: sessID,
-			Msg:       msg,
-			Errs:      errs,
-		}
+		switch ev.Type {
+		case "endpoint":
+			if sessID != "" {
+				continue
+			}
 
-		if err := <-errs; err != nil {
-			s.logError(fmt.Errorf("failed to handle message: %w", err))
-		}
-	}
+			u, err := url.Parse(ev.Data)
+			if err != nil {
+				session <- sessionResponse{err: fmt.Errorf("parse endpoint URL: %w", err)}
+				return
+			}
+			s.messageURL = u.String()
 
-	if scanner.Err() != nil {
-		if !errors.Is(scanner.Err(), context.Canceled) {
-			s.logError(fmt.Errorf("failed to read SSE events: %w", scanner.Err()))
+			sessID = u.Query().Get("sessionID")
+			if sessID == "" {
+				session <- sessionResponse{err: fmt.Errorf("no session ID in message URL")}
+			} else {
+				session <- sessionResponse{sessionID: sessID}
+			}
+		case "message":
+			if sessID == "" {
+				s.logError(fmt.Errorf("received message before endpoint URL"))
+				return
+			}
+
+			var msg JSONRPCMessage
+			if err := json.Unmarshal([]byte(ev.Data), &msg); err != nil {
+				s.logError(fmt.Errorf("failed to unmarshal message: %w", err))
+				continue
+			}
+
+			errs := make(chan error)
+			s.messagesChan <- SessionMsgWithErrs{
+				SessionID: sessID,
+				Msg:       msg,
+				Errs:      errs,
+			}
+
+			if err := <-errs; err != nil {
+				s.logError(fmt.Errorf("failed to handle message: %w", err))
+			}
+		default:
+			s.logError(fmt.Errorf("unhandled event type %q", ev.Type))
 		}
 	}
 }
