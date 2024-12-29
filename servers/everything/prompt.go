@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 )
 
 //nolint:lll

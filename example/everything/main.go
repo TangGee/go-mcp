@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
-	"github.com/MegaGrindStone/go-mcp/pkg/servers/everything"
+	"github.com/MegaGrindStone/go-mcp"
+	"github.com/MegaGrindStone/go-mcp/servers/everything"
 )
 
 var port = "8080"

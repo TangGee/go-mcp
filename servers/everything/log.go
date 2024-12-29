@@ -1,6 +1,6 @@
 package everything
 
-import "github.com/MegaGrindStone/go-mcp/pkg/mcp"
+import "github.com/MegaGrindStone/go-mcp"
 
 // LogStreams implements mcp.LogHandler interface.
 func (s *Server) LogStreams() <-chan mcp.LogParams {

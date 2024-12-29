@@ -1,13 +1,13 @@
 # go-mcp
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/MegaGrindStone/go-mcp.svg)](https://pkg.go.dev/github.com/MegaGrindStone/go-mcp/pkg/mcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/MegaGrindStone/go-mcp.svg)](https://pkg.go.dev/github.com/MegaGrindStone/go-mcp)
 ![CI](https://github.com/MegaGrindStone/go-mcp/actions/workflows/ci.yml/badge.svg)
 [![Go Report Card](https://goreportcard.com/badge/github.com/MegaGrindStone/go-mcp)](https://goreportcard.com/report/github.com/MegaGrindStone/go-mcp)
 [![codecov](https://codecov.io/gh/MegaGrindStone/go-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/MegaGrindStone/go-mcp)
 
 A Go implementation of the Model Context Protocol (MCP) - an open protocol that enables seamless integration between LLM applications and external data sources and tools.
 
-> ⚠️ **Warning**: This library is currently in active development and follows semantic versioning. Breaking changes may be introduced with minor version bumps (0.x.0) until v1.0.0 is released. After v1.0.0, the API will be stable and breaking changes will only occur in major version updates. We recommend pinning your dependency to a specific version and reviewing the changelog before upgrading.
+> ⚠️ **Warning**: The main branch contains unreleased changes and may be unstable. We recommend using the latest tagged release for stability. This library follows semantic versioning - breaking changes may be introduced with minor version bumps (0.x.0) until v1.0.0 is released. After v1.0.0, the API will be stable and breaking changes will only occur in major version updates. We recommend pinning your dependency to a specific version and reviewing the changelog before upgrading.
 
 ## Overview
 
@@ -155,7 +155,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/MegaGrindStone/go-mcp/pkg/mcp"
+    "github.com/MegaGrindStone/go-mcp"
 )
 
 type AwesomeMCPServer struct{}
@@ -322,7 +322,7 @@ import (
     "log"
     "net/http"
 
-    "github.com/MegaGrindStone/go-mcp/pkg/mcp"
+    "github.com/MegaGrindStone/go-mcp"
 )
 
 func main() {
@@ -372,11 +372,11 @@ func main() {
 
 ## Server Packages
 
-The `pkg/servers` directory contains reference server implementations that mirror those found in the official [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) repository.
+The `servers` directory contains reference server implementations that mirror those found in the official [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers) repository.
 
 ## Example
 
-The `example` folder contains sample implementations demonstrating how to use the servers from `pkg/servers` package.
+The `example` folder contains sample implementations demonstrating how to use the servers from `servers` package.
 
 ## Contributing
 

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 )
 
 func TestInitialize(t *testing.T) {

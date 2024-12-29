@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 )
 
 type client struct {

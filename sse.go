@@ -49,6 +49,11 @@ type SSEClient struct {
 	closeChan    chan struct{}
 }
 
+type sessionResponse struct {
+	sessionID string
+	err       error
+}
+
 // NewSSEServer creates and initializes a new SSE server instance with all necessary
 // channels for session management, message handling, and error reporting.
 func NewSSEServer() SSEServer {
@@ -340,11 +345,6 @@ func (s *SSEClient) Close() {
 	close(s.errsChan)
 	close(s.messagesChan)
 	close(s.closeChan)
-}
-
-type sessionResponse struct {
-	sessionID string
-	err       error
 }
 
 func (s *SSEClient) listenMessages(body io.ReadCloser, session chan<- sessionResponse) {

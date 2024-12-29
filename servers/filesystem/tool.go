@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 	"github.com/qri-io/jsonschema"
 )
 

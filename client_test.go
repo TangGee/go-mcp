@@ -3,7 +3,7 @@ package mcp_test
 import (
 	"context"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 )
 
 type mockPromptListWatcher struct{}

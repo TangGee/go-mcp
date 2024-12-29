@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
-	"github.com/MegaGrindStone/go-mcp/pkg/servers/filesystem"
+	"github.com/MegaGrindStone/go-mcp"
+	"github.com/MegaGrindStone/go-mcp/servers/filesystem"
 )
 
 func main() {

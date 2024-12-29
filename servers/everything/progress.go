@@ -1,6 +1,6 @@
 package everything
 
-import "github.com/MegaGrindStone/go-mcp/pkg/mcp"
+import "github.com/MegaGrindStone/go-mcp"
 
 // ProgressReports implements mcp.ProgressReporter interface.
 func (s *Server) ProgressReports() <-chan mcp.ProgressParams {

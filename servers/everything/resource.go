@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp/pkg/mcp"
+	"github.com/MegaGrindStone/go-mcp"
 )
 
 const pageSize = 10
