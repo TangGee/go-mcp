@@ -97,7 +97,7 @@ func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
 	errs := make(chan error)
 
 	go func() {
-		_, err = fmt.Fprintf(wr, "message: %s\n\n", msgBs)
+		_, err = fmt.Fprintf(wr, "event: message\ndata: %s\n\n", msgBs)
 		if err != nil {
 			errs <- fmt.Errorf("failed to write message: %w", err)
 			return
@@ -164,7 +164,7 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		s.writers.Store(sessID, w)
 
 		url := fmt.Sprintf("%s?sessionID=%s", messageBaseURL, sessID)
-		_, err := fmt.Fprintf(w, "endpoint: %s\n\n", url)
+		_, err := fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", url)
 		if err != nil {
 			nErr := fmt.Errorf("failed to write SSE URL: %w", err)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
@@ -367,6 +367,7 @@ func (s *SSEClient) listenMessages(body io.ReadCloser, session chan<- sessionRes
 				session <- sessionResponse{err: fmt.Errorf("parse endpoint URL: %w", err)}
 				return
 			}
+			s.messageURL = u.String()
 
 			sessID = u.Query().Get("sessionID")
 			if sessID == "" {
