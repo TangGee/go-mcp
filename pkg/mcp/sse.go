@@ -22,7 +22,7 @@ import (
 // The server maintains active client connections and handles message routing through
 // channels while providing thread-safe operations using sync.Map for connection management.
 type SSEServer struct {
-	// writers is a map of sessionID to http.ResponseWriter
+	// writers is a map of sessionID to *sse.Session
 	writers *sync.Map
 
 	sessionsChan chan SessionCtx
@@ -83,11 +83,11 @@ func NewSSEClient(baseURL string, httpClient *http.Client) *SSEClient {
 // Returns an error if the session is not found, message marshaling fails,
 // or the write operation fails.
 func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
-	w, ok := s.writers.Load(msg.SessionID)
+	ss, ok := s.writers.Load(msg.SessionID)
 	if !ok {
 		return fmt.Errorf("session not found")
 	}
-	wr, _ := w.(http.ResponseWriter)
+	sess, _ := ss.(*sse.Session)
 
 	msgBs, err := json.Marshal(msg.Msg)
 	if err != nil {
@@ -97,18 +97,21 @@ func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
 	errs := make(chan error)
 
 	go func() {
-		_, err = fmt.Fprintf(wr, "event: message\ndata: %s\n\n", msgBs)
-		if err != nil {
-			errs <- fmt.Errorf("failed to write message: %w", err)
+		msg := sse.Message{
+			Type: sse.Type("message"),
+		}
+		msg.AppendData(string(msgBs))
+		if err := sess.Send(&msg); err != nil {
+			errs <- fmt.Errorf("failed to send message: %w", err)
 			return
 		}
 
 		s.flushLock.Lock()
-		f, fOk := wr.(http.Flusher)
-		if fOk {
-			f.Flush()
+		defer s.flushLock.Unlock()
+		if err := sess.Flush(); err != nil {
+			errs <- fmt.Errorf("failed to flush message: %w", err)
+			return
 		}
-		s.flushLock.Unlock()
 		errs <- nil
 	}()
 
@@ -156,16 +159,27 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		// Disable chunked encoding to avoid issues with SSE
 		w.Header().Set("Transfer-Encoding", "identity")
 
+		sess, err := sse.Upgrade(w, r)
+		if err != nil {
+			nErr := fmt.Errorf("failed to upgrade to SSE: %w", err)
+			http.Error(w, nErr.Error(), http.StatusInternalServerError)
+			s.logError(nErr)
+			return
+		}
+
 		sessID := uuid.New().String()
 		s.sessionsChan <- SessionCtx{
 			Ctx: r.Context(),
 			ID:  sessID,
 		}
-		s.writers.Store(sessID, w)
+		s.writers.Store(sessID, sess)
 
 		url := fmt.Sprintf("%s?sessionID=%s", messageBaseURL, sessID)
-		_, err := fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", url)
-		if err != nil {
+		msg := sse.Message{
+			Type: sse.Type("endpoint"),
+		}
+		msg.AppendData(url)
+		if err := sess.Send(&msg); err != nil {
 			nErr := fmt.Errorf("failed to write SSE URL: %w", err)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
 			s.logError(nErr)
@@ -173,9 +187,12 @@ func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
 		}
 
 		s.flushLock.Lock()
-		f, ok := w.(http.Flusher)
-		if ok {
-			f.Flush()
+		if err := sess.Flush(); err != nil {
+			s.flushLock.Unlock()
+			nErr := fmt.Errorf("failed to flush SSE: %w", err)
+			http.Error(w, nErr.Error(), http.StatusInternalServerError)
+			s.logError(nErr)
+			return
 		}
 		s.flushLock.Unlock()
 

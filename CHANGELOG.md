@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored parameter naming convention for `Client` request methods to improve consistency between method names and their parameters. Previously, parameter names like `PromptsListParams` and `PromptsGetParams` used noun-verb style while methods used verb-noun style. Now, parameter names follow the same verb-noun pattern as their corresponding methods (e.g., `ListPromptsParams` and `GetPromptParams`).
 - Refactored the result name of the request calls, either in `Client` or `Server` interfaces. This is done to improve consistency between method names and their results. For example, `ListPrompts` now returns `ListPromptsResult` instead of `PromptList`.
 - Use structured parameter types (such as `ListPromptsParams` or `GetPromptParams`) in `Client` method signatures when making server requests, rather than using individual parameters. For example, instead of passing separate `cursor` and `progressToken` parameters to `ListPrompts`, or `name` and `arguments` to `GetPrompt`, use a dedicated parameter struct.
-- Utilize `go-sse` to to handle `SSEClient` by @tmaxmax.
+- Utilize `go-sse` to handle `SSEClient` by @tmaxmax.
+- Utilize `go-sse`'s `Session` to sent the event messages from `SSEServer`.
 
 ## [0.2.0] - 2024-12-27
 

@@ -327,7 +327,10 @@ func (s server) listenSessions() {
 			return
 		case id := <-s.sessionStopChan:
 			s.sessions.Delete(id)
-		case ctx := <-ctxs:
+		case ctx, ok := <-ctxs:
+			if !ok {
+				continue
+			}
 			s.startSession(ctx.Ctx, ctx.ID)
 		case msg := <-msgs:
 			msg.Errs <- s.handleMsg(msg.SessionID, msg.Msg)
