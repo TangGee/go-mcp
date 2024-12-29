@@ -7,6 +7,8 @@
 
 A Go implementation of the Model Context Protocol (MCP) - an open protocol that enables seamless integration between LLM applications and external data sources and tools.
 
+> ⚠️ **Warning**: This library is currently in active development and follows semantic versioning. Breaking changes may be introduced with minor version bumps (0.x.0) until v1.0.0 is released. After v1.0.0, the API will be stable and breaking changes will only occur in major version updates. We recommend pinning your dependency to a specific version and reviewing the changelog before upgrading.
+
 ## Overview
 
 This repository provides a Go library implementing the Model Context Protocol (MCP) following the [official specification](https://spec.modelcontextprotocol.io/specification/).
