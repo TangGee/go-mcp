@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Session` interface for handling session on `ServerTransport` interfaces.
+- `ProgressReporter` function type for reporting progress in server primitive operations
 
 ### Changed
 
@@ -28,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pkg/mcp` package (moved to root for cleaner imports).
 - `pkg/servers` package (moved to `servers` for cleaner imports).
 - `Transport` interface (replaced by `ServerTransport` and `ClientTransport`)
+- `ProgressReporter` interface (replaced with function type for simpler progress reporting)
 
 ## [0.2.0] - 2024-12-27
 
