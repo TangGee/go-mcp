@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- `Session` interface for handling session on `ServerTransport` interfaces.
+
 ### Changed
 
 - Refactored parameter naming convention for `Client` request methods to improve consistency between method names and their parameters. Previously, parameter names like `PromptsListParams` and `PromptsGetParams` used noun-verb style while methods used verb-noun style. Now, parameter names follow the same verb-noun pattern as their corresponding methods (e.g., `ListPromptsParams` and `GetPromptParams`).
@@ -15,11 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Utilize `go-sse` to handle `SSEClient` by @tmaxmax.
 - Utilize `go-sse`'s `Session` to sent the event messages from `SSEServer`.
 - Moved `mcp` package from `pkg/mcp` to root folder and `pkg/servers` package to `servers` package to simplify import paths. The `pkg` directory added unnecessary nesting and noise in import paths (e.g., from `github.com/MegaGrindStone/go-mcp/pkg/mcp` to `github.com/MegaGrindStone/go-mcp`, and from `github.com/MegaGrindStone/go-mcp/pkg/servers` to `github.com/MegaGrindStone/go-mcp/servers`).
+- Split `Transport` interface into `ServerTransport` and `ClientTransport` interfaces. `ClientTransport` doesn't need session-based messages as `Client` would just use one `Session` in its lifecycle.
+- Use iterator pattern for sessions in `ServerTransport` and messages in `ClientTransport`.
+- Use `io.ReadCloser` and `io.WriteCloser` for `StdIO` transport.
 
 ### Removed
 
 - `pkg/mcp` package (moved to root for cleaner imports).
 - `pkg/servers` package (moved to `servers` for cleaner imports).
+- `Transport` interface (replaced by `ServerTransport` and `ClientTransport`)
 
 ## [0.2.0] - 2024-12-27
 

@@ -7,221 +7,184 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
+	"log/slog"
 	"net/http"
 	"net/url"
-	"sync"
 
 	"github.com/google/uuid"
 	"github.com/tmaxmax/go-sse"
 )
 
-// SSEServer implements a Server-Sent Events (SSE) server that manages client connections
-// and message distribution. It provides bidirectional communication through SSE for
-// server-to-client streaming and HTTP POST for client-to-server messages.
+// SSEServer implements a framework-agnostic Server-Sent Events (SSE) server for managing
+// bidirectional client communication. It handles server-to-client streaming through SSE
+// and client-to-server messaging via HTTP POST endpoints.
 //
-// The server maintains active client connections and handles message routing through
-// channels while providing thread-safe operations using sync.Map for connection management.
+// The server provides connection management, message distribution, and session tracking
+// capabilities through its HandleSSE and HandleMessage http.Handlers. These handlers can
+// be integrated with any HTTP framework.
+//
+// Instances should be created using NewSSEServer and properly shut down using Close when
+// no longer needed.
 type SSEServer struct {
-	// writers is a map of sessionID to *sse.Session
-	writers *sync.Map
+	messageURL string
+	logger     *slog.Logger
 
-	sessionsChan chan SessionCtx
-	messagesChan chan SessionMsgWithErrs
-	errsChan     chan error
-	closeChan    chan struct{}
-
-	flushLock *sync.Mutex
+	addSessions     chan sseServerSession
+	sessions        chan sseServerSession
+	removeSessions  chan sseServerSessionRemoval
+	sessionMessages chan sessionMsg
+	done            chan struct{}
+	closed          chan struct{}
 }
 
 // SSEClient implements a Server-Sent Events (SSE) client that manages server connections
 // and bidirectional message handling. It provides real-time communication through SSE for
 // server-to-client streaming and HTTP POST for client-to-server messages.
-//
-// The client maintains a persistent connection to the server and handles message routing
-// through channels while providing automatic reconnection and error handling capabilities.
+// Instances should be created using NewSSEClient.
 type SSEClient struct {
 	httpClient *http.Client
-	baseURL    string
+	connectURL string
 	messageURL string
+	logger     *slog.Logger
 
-	messagesChan chan SessionMsgWithErrs
-	errsChan     chan error
-	closeChan    chan struct{}
+	messages chan JSONRPCMessage
 }
 
-type sessionResponse struct {
-	sessionID string
-	err       error
+type sseServerSession struct {
+	id           string
+	sess         *sse.Session
+	sendMsgs     chan sseServerSessionSendMsg
+	receivedMsgs chan JSONRPCMessage
+
+	done           chan struct{}
+	sentClosed     chan struct{}
+	receivedClosed chan struct{}
 }
 
-// NewSSEServer creates and initializes a new SSE server instance with all necessary
-// channels for session management, message handling, and error reporting.
-func NewSSEServer() SSEServer {
-	return SSEServer{
-		writers:      new(sync.Map),
-		sessionsChan: make(chan SessionCtx, 1),
-		messagesChan: make(chan SessionMsgWithErrs),
-		errsChan:     make(chan error),
-		closeChan:    make(chan struct{}),
-		flushLock:    new(sync.Mutex),
+type sseServerSessionSendMsg struct {
+	msg  *sse.Message
+	errs chan<- error
+}
+
+type sseServerSessionRemoval struct {
+	sessID string
+	done   chan<- struct{}
+}
+
+// NewSSEServer creates and initializes a new SSE server that listens for client connections
+// at the specified messageURL. The server is immediately operational upon creation with
+// initialized internal channels for session and message management. The returned SSEServer
+// must be closed using Close when no longer needed.
+func NewSSEServer(messageURL string) SSEServer {
+	s := SSEServer{
+		messageURL:      messageURL,
+		logger:          slog.Default(),
+		addSessions:     make(chan sseServerSession),
+		sessions:        make(chan sseServerSession, 5),
+		removeSessions:  make(chan sseServerSessionRemoval),
+		sessionMessages: make(chan sessionMsg),
+		done:            make(chan struct{}),
+		closed:          make(chan struct{}),
 	}
+	go s.listen()
+	return s
 }
 
-// NewSSEClient creates and initializes a new SSE client instance with the specified
-// base URL and HTTP client. If httpClient is nil, the default HTTP client will be used.
-//
-// The baseURL parameter should point to the SSE endpoint of the server.
-func NewSSEClient(baseURL string, httpClient *http.Client) *SSEClient {
+// NewSSEClient creates an SSE client that connects to the specified connectURL. The optional
+// httpClient parameter allows custom HTTP client configuration - if nil, the default HTTP
+// client is used. The client must call StartSession to begin communication.
+func NewSSEClient(connectURL string, httpClient *http.Client) *SSEClient {
+	cli := httpClient
+	if cli == nil {
+		cli = http.DefaultClient
+	}
 	return &SSEClient{
-		httpClient:   httpClient,
-		baseURL:      baseURL,
-		messagesChan: make(chan SessionMsgWithErrs),
-		errsChan:     make(chan error),
-		closeChan:    make(chan struct{}),
+		connectURL: connectURL,
+		httpClient: cli,
+		logger:     slog.Default(),
+		messages:   make(chan JSONRPCMessage),
 	}
 }
 
-// Send delivers a message to a specific client session identified by the SessionMsg.
-// It marshals the message to JSON and writes it to the client's event stream.
-// The operation can be cancelled via the provided context.
-//
-// Returns an error if the session is not found, message marshaling fails,
-// or the write operation fails.
-func (s SSEServer) Send(ctx context.Context, msg SessionMsg) error {
-	ss, ok := s.writers.Load(msg.SessionID)
-	if !ok {
-		return fmt.Errorf("session not found")
-	}
-	sess, _ := ss.(*sse.Session)
-
-	msgBs, err := json.Marshal(msg.Msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	errs := make(chan error)
-
-	go func() {
-		msg := sse.Message{
-			Type: sse.Type("message"),
+// Sessions returns an iterator over active client sessions. The iterator yields new
+// Session instances as clients connect to the server. Use this method to access and
+// interact with connected clients through the Session interface.
+func (s SSEServer) Sessions() iter.Seq[Session] {
+	return func(yield func(Session) bool) {
+		for sess := range s.sessions {
+			if !yield(sess) {
+				return
+			}
 		}
-		msg.AppendData(string(msgBs))
-		if err := sess.Send(&msg); err != nil {
-			errs <- fmt.Errorf("failed to send message: %w", err)
-			return
-		}
-
-		s.flushLock.Lock()
-		defer s.flushLock.Unlock()
-		if err := sess.Flush(); err != nil {
-			errs <- fmt.Errorf("failed to flush message: %w", err)
-			return
-		}
-		errs <- nil
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err = <-errs:
 	}
-
-	return err
 }
 
-// Sessions returns a receive-only channel that provides notifications of new client
-// sessions. Each SessionCtx contains the session ID and associated context.
-func (s SSEServer) Sessions() <-chan SessionCtx {
-	return s.sessionsChan
-}
-
-// SessionMessages returns a receive-only channel that provides incoming messages
-// from clients. Each message includes the session ID, the message content,
-// and an error channel for reporting processing results back to the client.
-func (s SSEServer) SessionMessages() <-chan SessionMsgWithErrs {
-	return s.messagesChan
-}
-
-// Errors returns a receive-only channel that provides server-side errors
-// that occur during operation. This includes connection, message handling,
-// and internal processing errors.
-func (s SSEServer) Errors() <-chan error {
-	return s.errsChan
-}
-
-// HandleSSE returns an http.Handler that manages SSE connections from clients.
-// It sets up appropriate headers for SSE communication, creates a new session,
-// and maintains the connection until closed by the client or server.
-//
-// The messageBaseURL parameter specifies the base URL for client message endpoints.
-// Each client receives a unique message endpoint URL with their session ID.
-func (s SSEServer) HandleSSE(messageBaseURL string) http.Handler {
+// HandleSSE returns an http.Handler for managing SSE connections over GET requests.
+// The handler upgrades HTTP connections to SSE, assigns unique session IDs, and
+// provides clients with their message endpoints. The connection remains active until
+// either the client disconnects or the server closes.
+func (s SSEServer) HandleSSE() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		// Disable chunked encoding to avoid issues with SSE
-		w.Header().Set("Transfer-Encoding", "identity")
-
 		sess, err := sse.Upgrade(w, r)
 		if err != nil {
-			nErr := fmt.Errorf("failed to upgrade to SSE: %w", err)
+			nErr := fmt.Errorf("failed to upgrade session: %w", err)
+			s.logger.Error("failed to upgrade session", "err", nErr)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
-			s.logError(nErr)
 			return
 		}
 
 		sessID := uuid.New().String()
-		s.sessionsChan <- SessionCtx{
-			Ctx: r.Context(),
-			ID:  sessID,
-		}
-		s.writers.Store(sessID, sess)
 
-		url := fmt.Sprintf("%s?sessionID=%s", messageBaseURL, sessID)
+		url := fmt.Sprintf("%s?sessionID=%s", s.messageURL, sessID)
 		msg := sse.Message{
 			Type: sse.Type("endpoint"),
 		}
 		msg.AppendData(url)
 		if err := sess.Send(&msg); err != nil {
 			nErr := fmt.Errorf("failed to write SSE URL: %w", err)
+			s.logger.Error("failed to write SSE URL", "err", nErr)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
-			s.logError(nErr)
 			return
 		}
 
-		s.flushLock.Lock()
 		if err := sess.Flush(); err != nil {
-			s.flushLock.Unlock()
 			nErr := fmt.Errorf("failed to flush SSE: %w", err)
+			s.logger.Error("failed to flush SSE", "err", nErr)
 			http.Error(w, nErr.Error(), http.StatusInternalServerError)
-			s.logError(nErr)
 			return
 		}
-		s.flushLock.Unlock()
 
-		// Keep the connection open for new messages
-		select {
-		case <-r.Context().Done():
-		case <-s.closeChan:
+		s.addSessions <- sseServerSession{
+			id:             sessID,
+			sess:           sess,
+			sendMsgs:       make(chan sseServerSessionSendMsg),
+			receivedMsgs:   make(chan JSONRPCMessage, 5),
+			done:           make(chan struct{}),
+			sentClosed:     make(chan struct{}),
+			receivedClosed: make(chan struct{}),
 		}
-		// Session would be removed by server when r.Context is done.
+
+		<-r.Context().Done()
+		removeDone := make(chan struct{})
+		s.removeSessions <- sseServerSessionRemoval{
+			sessID: sessID,
+			done:   removeDone,
+		}
+		<-removeDone
 	})
 }
 
-// HandleMessage returns an http.Handler that processes incoming messages from clients
-// via HTTP POST requests. It expects a session ID as a query parameter and the message
-// content as JSON in the request body.
-//
-// Messages are validated and routed through the server's message channel system
-// for processing. Results are communicated back through the response.
+// HandleMessage returns an http.Handler for processing client messages sent via POST
+// requests. The handler expects a sessionID query parameter and a JSON-encoded message
+// body. Valid messages are routed to their corresponding Session's message stream,
+// accessible through the Sessions iterator.
 func (s SSEServer) HandleMessage() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessID := r.URL.Query().Get("sessionID")
 		if sessID == "" {
 			nErr := fmt.Errorf("missing sessionID query parameter")
-			s.logError(nErr)
+			s.logger.Error("missing sessionID query parameter", "err", nErr)
 			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
@@ -231,44 +194,28 @@ func (s SSEServer) HandleMessage() http.Handler {
 
 		if err := decoder.Decode(&msg); err != nil {
 			nErr := fmt.Errorf("failed to decode message: %w", err)
-			s.logError(nErr)
+			s.logger.Error("failed to decode message", "err", nErr)
 			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
 
-		errs := make(chan error)
-		s.messagesChan <- SessionMsgWithErrs{
-			SessionID: sessID,
-			Msg:       msg,
-			Errs:      errs,
-		}
-
-		if err := <-errs; err != nil {
-			nErr := fmt.Errorf("failed to handle message: %w", err)
-			s.logError(nErr)
-			http.Error(w, nErr.Error(), http.StatusBadRequest)
-			return
-		}
+		s.sessionMessages <- sessionMsg{sessionID: sessID, msg: msg}
 	})
 }
 
-// Close shuts down the SSE server by closing all internal channels.
-// This terminates all active connections and stops message processing.
+// Close gracefully shuts down the SSE server by terminating all active client
+// connections and cleaning up internal resources. This method blocks until shutdown
+// is complete.
 func (s SSEServer) Close() {
-	close(s.sessionsChan)
-	close(s.messagesChan)
-	close(s.errsChan)
-	close(s.closeChan)
+	close(s.done)
+	<-s.closed
 }
 
-// Send delivers a message to the server using an HTTP POST request. The message
-// is marshaled to JSON and sent to the server's message endpoint. The operation
-// can be cancelled via the provided context.
-//
-// Returns an error if message marshaling fails, the request cannot be created,
-// or the server returns a non-200 status code.
-func (s *SSEClient) Send(ctx context.Context, msg SessionMsg) error {
-	msgBs, err := json.Marshal(msg.Msg)
+// Send transmits a JSON-encoded message to the server through an HTTP POST request. The
+// provided context allows request cancellation. Returns an error if message encoding fails,
+// the request cannot be created, or the server responds with a non-200 status code.
+func (s *SSEClient) Send(ctx context.Context, msg JSONRPCMessage) error {
+	msgBs, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
@@ -293,143 +240,185 @@ func (s *SSEClient) Send(ctx context.Context, msg SessionMsg) error {
 	return nil
 }
 
-// StartSession initiates a new SSE connection with the server and returns the
-// session ID. It establishes the event stream connection and starts listening
-// for server messages in a separate goroutine.
-//
-// The returned session ID can be used to correlate messages with this specific
-// connection. Returns an error if the connection cannot be established or
-// the server response is invalid.
-func (s *SSEClient) StartSession() (string, error) {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, s.baseURL, nil)
+// StartSession establishes the SSE connection and begins message processing. It sends
+// connection status through the ready channel and returns an iterator for received server
+// messages. The connection remains active until the context is cancelled or an error occurs.
+func (s *SSEClient) StartSession(ctx context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.connectURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		close(ready)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to connect to SSE server: %w", err)
+		close(ready)
+		return nil, fmt.Errorf("failed to connect to SSE server: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
-		return "", fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		close(ready)
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	session := make(chan sessionResponse)
+	go s.listenSSEMessages(resp.Body, ready)
 
-	go s.listenMessages(resp.Body, session)
-
-	sessionResp := <-session
-	return sessionResp.sessionID, sessionResp.err
+	return s.listenMessages(), nil
 }
 
-// SessionMessages returns a receive-only channel that provides incoming messages
-// from the server. Each message includes the session ID, the message content,
-// and an error channel for reporting processing results back to the server.
-func (s *SSEClient) SessionMessages() <-chan SessionMsgWithErrs {
-	return s.messagesChan
-}
+func (s SSEServer) listen() {
+	defer close(s.closed)
 
-// Errors returns a receive-only channel that provides client-side errors
-// that occur during operation. This includes connection errors, message
-// parsing failures, and other operational errors.
-func (s *SSEClient) Errors() <-chan error {
-	return s.errsChan
-}
+	sessions := make(map[string]sseServerSession)
 
-// Close shuts down the SSE client by closing all internal channels and
-// terminating the connection to the server. This stops all message processing
-// and releases associated resources.
-func (s *SSEClient) Close() {
-	close(s.errsChan)
-	close(s.messagesChan)
-	close(s.closeChan)
-}
-
-func (s *SSEClient) listenMessages(body io.ReadCloser, session chan<- sessionResponse) {
-	defer body.Close()
-	defer close(session)
-
-	var sessID string
-
-	for ev, err := range sse.Read(body, nil) {
+	for {
 		select {
-		case <-s.closeChan:
-			if sessID == "" {
-				session <- sessionResponse{err: fmt.Errorf("failed to initialize session: client closed")}
+		case <-s.done:
+			close(s.sessions)
+			for _, sess := range sessions {
+				sess.close()
 			}
 			return
-		default:
+		case sess := <-s.addSessions:
+			go sess.start()
+			sessions[sess.id] = sess
+			s.sessions <- sess
+		case removal := <-s.removeSessions:
+			sess, ok := sessions[removal.sessID]
+			if !ok {
+				continue
+			}
+			sess.close()
+			delete(sessions, removal.sessID)
+			removal.done <- struct{}{}
+		case sessMsg := <-s.sessionMessages:
+			sess, ok := sessions[sessMsg.sessionID]
+			if !ok {
+				continue
+			}
+			sess.receivedMsgs <- sessMsg.msg
 		}
+	}
+}
 
+func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
+	defer body.Close()
+
+	for ev, err := range sse.Read(body, nil) {
 		if err != nil {
-			if !errors.Is(err, context.Canceled) {
-				s.logError(fmt.Errorf("failed to read SSE events: %w", err))
-			}
-			if sessID == "" {
-				session <- sessionResponse{err: fmt.Errorf("failed to initialize session: %w", err)}
-			}
 			return
 		}
 
 		switch ev.Type {
 		case "endpoint":
-			if sessID != "" {
-				continue
-			}
-
 			u, err := url.Parse(ev.Data)
 			if err != nil {
-				session <- sessionResponse{err: fmt.Errorf("parse endpoint URL: %w", err)}
+				ready <- fmt.Errorf("parse endpoint URL: %w", err)
+				return
+			}
+			if u.String() == "" {
+				ready <- errors.New("empty endpoint URL")
 				return
 			}
 			s.messageURL = u.String()
-
-			sessID = u.Query().Get("sessionID")
-			if sessID == "" {
-				session <- sessionResponse{err: fmt.Errorf("no session ID in message URL")}
-			} else {
-				session <- sessionResponse{sessionID: sessID}
-			}
+			close(ready)
 		case "message":
-			if sessID == "" {
-				s.logError(fmt.Errorf("received message before endpoint URL"))
-				return
+			if s.messageURL == "" {
+				s.logger.Error("received message before endpoint URL")
+				continue
 			}
 
 			var msg JSONRPCMessage
 			if err := json.Unmarshal([]byte(ev.Data), &msg); err != nil {
-				s.logError(fmt.Errorf("failed to unmarshal message: %w", err))
+				s.logger.Error("failed to unmarshal message", "err", err)
 				continue
 			}
 
-			errs := make(chan error)
-			s.messagesChan <- SessionMsgWithErrs{
-				SessionID: sessID,
-				Msg:       msg,
-				Errs:      errs,
-			}
-
-			if err := <-errs; err != nil {
-				s.logError(fmt.Errorf("failed to handle message: %w", err))
-			}
+			s.messages <- msg
 		default:
-			s.logError(fmt.Errorf("unhandled event type %q", ev.Type))
+			s.logger.Error("unhandled event type", "type", ev.Type)
 		}
 	}
 }
 
-func (s *SSEServer) logError(err error) {
-	select {
-	case s.errsChan <- err:
-	default:
+func (s *SSEClient) listenMessages() iter.Seq[JSONRPCMessage] {
+	return func(yield func(JSONRPCMessage) bool) {
+		for msg := range s.messages {
+			if !yield(msg) {
+				return
+			}
+		}
 	}
 }
 
-func (s *SSEClient) logError(err error) {
-	select {
-	case s.errsChan <- err:
-	default:
+func (s sseServerSession) ID() string { return s.id }
+
+func (s sseServerSession) Send(ctx context.Context, msg JSONRPCMessage) error {
+	msgBs, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
 	}
+
+	sseMsg := &sse.Message{
+		Type: sse.Type("message"),
+	}
+	sseMsg.AppendData(string(msgBs))
+
+	errs := make(chan error)
+	sm := sseServerSessionSendMsg{
+		msg:  sseMsg,
+		errs: errs,
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		return nil
+	case s.sendMsgs <- sm:
+	}
+
+	return <-errs
+}
+
+func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
+	return func(yield func(JSONRPCMessage) bool) {
+		defer close(s.receivedClosed)
+
+		for msg := range s.receivedMsgs {
+			if !yield(msg) {
+				return
+			}
+		}
+	}
+}
+
+func (s sseServerSession) start() {
+	defer close(s.sentClosed)
+
+	for {
+		select {
+		case sm := <-s.sendMsgs:
+			if err := s.sess.Send(sm.msg); err != nil {
+				sm.errs <- fmt.Errorf("failed to send message: %w", err)
+				continue
+			}
+			if err := s.sess.Flush(); err != nil {
+				sm.errs <- fmt.Errorf("failed to flush message: %w", err)
+				continue
+			}
+			sm.errs <- nil
+		case <-s.done:
+			return
+		}
+	}
+}
+
+func (s sseServerSession) close() {
+	close(s.done)
+	close(s.receivedMsgs)
+
+	<-s.sentClosed
+	<-s.receivedClosed
 }

@@ -4,92 +4,76 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 
 	"github.com/qri-io/jsonschema"
 )
 
-// Transport provides the core communication interface between MCP servers and clients.
-// It handles bidirectional message passing with support for multiple concurrent sessions.
-// Implementations must ensure thread-safety and proper handling of context cancellation.
-type Transport interface {
-	// Send transmits a message to either server or client within a specific session.
-	// The context controls the send operation's lifetime - implementations must respect
-	// context cancellation and return appropriate errors.
-	//
-	// The SessionMsg parameter contains both the target session ID and the message payload.
-	// Implementations should maintain session isolation to prevent cross-session interference.
-	Send(ctx context.Context, msg SessionMsg) error
-
-	// SessionMessages returns a receive-only channel that emits incoming messages from
-	// connected peers. Each message includes the originating session ID, the message
-	// content, and an error channel for reporting processing outcomes.
-	//
-	// The returned channel remains open for the lifetime of the transport. Implementations
-	// must ensure the channel is properly closed when the transport is closed.
-	//
-	// The error channel in SessionMsgWithErrs must be handled by receiving exactly one
-	// error value, even if errors are not relevant to the implementation.
-	SessionMessages() <-chan SessionMsgWithErrs
-
-	// Close terminates the transport, releasing any held resources and closing
-	// all active sessions. After Close is called, no new messages can be sent
-	// or received, and all pending operations should be cancelled.
-	Close()
-}
-
-// ServerTransport extends the base Transport interface with server-specific
-// functionality for accepting and managing client sessions. It provides the
-// server-side communication layer in the MCP protocol.
+// ServerTransport provides the server-side communication layer in the MCP protocol.
 type ServerTransport interface {
-	Transport
-
-	// Sessions returns a receive-only channel that emits new client session
-	// connections. Each SessionCtx contains both the unique session identifier
-	// and a context that is cancelled when the session ends.
-	//
-	// The implementation must:
-	// - Maintain session ordering and deliver all sessions without drops
-	// - Keep the channel open for the transport's lifetime
-	// - Close the context when its associated session terminates
-	// - Support concurrent access from multiple goroutines
-	Sessions() <-chan SessionCtx
+	// Sessions returns an iterator that yields new client sessions as they are initiated.
+	// Each yielded Session represents a unique client connection and provides methods for
+	// bidirectional communication. The implementation must guarantee that each session ID
+	// is unique across all active connections.
+	Sessions() iter.Seq[Session]
 }
 
-// ClientTransport extends the base Transport interface with client-specific
-// functionality for initiating sessions with servers. It provides the
-// client-side communication layer in the MCP protocol.
+// ClientTransport provides the client-side communication layer in the MCP protocol.
 type ClientTransport interface {
-	Transport
-
-	// StartSession initiates a new session with the server and returns the
-	// assigned session identifier. The implementation may cache the session ID
-	// internally to route subsequent messages.
+	// StartSession initiates a new session with the server and returns an iterator
+	// that yields server messages. The ready channel is used to signal when the transport
+	// is ready to send messages.
 	//
-	// Returns an error if the session cannot be established. Implementations
-	// should provide meaningful error information to help diagnose connection
-	// issues.
-	StartSession() (string, error)
+	// The implementation must ensure StartSession is called only once and must close or feed
+	// the ready channel when prepared to send messages. Operations should be canceled if the
+	// context is canceled, and appropriate errors should be returned for connection or protocol
+	// failures.
+	StartSession(ctx context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error)
+
+	// Send transmits a message to the server. The implementation must only allow sending
+	// after the ready channel from StartSession is closed or fed. Operations should be
+	// canceled if the context is canceled, and appropriate errors should be returned for
+	// transmission failures.
+	Send(ctx context.Context, msg JSONRPCMessage) error
+}
+
+// Session represents a bidirectional communication channel between server and client.
+type Session interface {
+	// ID returns the unique identifier for this session. The implementation must
+	// guarantee that session IDs are unique across all active sessions managed by
+	// the ServerTransport.
+	ID() string
+
+	// Send transmits a message to the client. The implementation should cancel
+	// operations if the context is canceled and return appropriate errors for
+	// transmission failures.
+	Send(ctx context.Context, msg JSONRPCMessage) error
+
+	// Messages returns an iterator that yields messages received from the client.
+	Messages() iter.Seq[JSONRPCMessage]
 }
 
 // Server interfaces
 
 // PromptServer defines the interface for managing prompts in the MCP protocol.
-// It provides functionality for listing available prompts, retrieving specific prompts
-// with arguments, and providing prompt argument completions.
 type PromptServer interface {
-	// ListPrompts returns a paginated list of available prompts.
+	// ListPrompts returns a paginated list of available prompts. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if operation fails or context is cancelled.
-	ListPrompts(ctx context.Context, params ListPromptsParams, requestClient RequestClientFunc) (ListPromptResult, error)
+	ListPrompts(context.Context, ListPromptsParams, ProgressReporter, RequestClientFunc) (ListPromptResult, error)
 
 	// GetPrompt retrieves a specific prompt template by name with the given arguments.
+	// The ProgressReporter can be used to report operation progress, and RequestClientFunc
+	// enables client-server communication during execution.
 	// Returns error if prompt not found, arguments are invalid, or context is cancelled.
-	GetPrompt(ctx context.Context, params GetPromptParams, requestClient RequestClientFunc) (GetPromptResult, error)
+	GetPrompt(context.Context, GetPromptParams, ProgressReporter, RequestClientFunc) (GetPromptResult, error)
 
 	// CompletesPrompt provides completion suggestions for a prompt argument.
-	// Used to implement interactive argument completion in clients.
+	// Used to implement interactive argument completion in clients. The RequestClientFunc
+	// enables client-server communication during execution.
 	// Returns error if prompt doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesPrompt(ctx context.Context, params CompletesCompletionParams,
-		requestClient RequestClientFunc) (CompletionResult, error)
+	CompletesPrompt(context.Context, CompletesCompletionParams, RequestClientFunc) (CompletionResult, error)
 }
 
 // PromptListUpdater provides an interface for monitoring changes to the available prompts list.
@@ -110,34 +94,38 @@ type PromptListUpdater interface {
 }
 
 // ResourceServer defines the interface for managing resources in the MCP protocol.
-// It provides functionality for listing, reading, and subscribing to resources,
-// as well as managing resource templates.
 type ResourceServer interface {
-	// ListResources returns a paginated list of available resources.
+	// ListResources returns a paginated list of available resources. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if operation fails or context is cancelled.
-	ListResources(ctx context.Context, params ListResourcesParams, requestClient RequestClientFunc) (
+	ListResources(context.Context, ListResourcesParams, ProgressReporter, RequestClientFunc) (
 		ListResourcesResult, error)
 
-	// ReadResource retrieves a specific resource by its URI.
+	// ReadResource retrieves a specific resource by its URI. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if resource not found, cannot be read, or context is cancelled.
-	ReadResource(ctx context.Context, params ReadResourceParams, requestClient RequestClientFunc) (
+	ReadResource(context.Context, ReadResourceParams, ProgressReporter, RequestClientFunc) (
 		ReadResourceResult, error)
 
-	// ListResourceTemplates returns all available resource templates.
+	// ListResourceTemplates returns all available resource templates. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if templates cannot be retrieved or context is cancelled.
-	ListResourceTemplates(ctx context.Context, params ListResourceTemplatesParams,
-		requestClient RequestClientFunc) (ListResourceTemplatesResult, error)
+	ListResourceTemplates(context.Context, ListResourceTemplatesParams, ProgressReporter, RequestClientFunc) (
+		ListResourceTemplatesResult, error)
 
 	// CompletesResourceTemplate provides completion suggestions for a resource template argument.
+	// The RequestClientFunc enables client-server communication during execution.
 	// Returns error if template doesn't exist, completions cannot be generated, or context is cancelled.
-	CompletesResourceTemplate(ctx context.Context, params CompletesCompletionParams,
-		requestClient RequestClientFunc) (CompletionResult, error)
+	CompletesResourceTemplate(context.Context, CompletesCompletionParams, RequestClientFunc) (CompletionResult, error)
 
 	// SubscribeResource registers interest in a specific resource URI.
-	SubscribeResource(params SubscribeResourceParams)
+	SubscribeResource(SubscribeResourceParams)
 
 	// UnsubscribeResource unregisters interest in a specific resource URI.
-	UnsubscribeResource(params UnsubscribeResourceParams)
+	UnsubscribeResource(UnsubscribeResourceParams)
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
@@ -173,15 +161,18 @@ type ResourceSubscribedUpdater interface {
 }
 
 // ToolServer defines the interface for managing tools in the MCP protocol.
-// It provides functionality for listing available tools and executing tool operations.
 type ToolServer interface {
-	// ListTools returns a paginated list of available tools.
+	// ListTools returns a paginated list of available tools. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if operation fails or context is cancelled.
-	ListTools(ctx context.Context, params ListToolsParams, requestClient RequestClientFunc) (ListToolsResult, error)
+	ListTools(context.Context, ListToolsParams, ProgressReporter, RequestClientFunc) (ListToolsResult, error)
 
-	// CallTool executes a specific tool with the given arguments.
+	// CallTool executes a specific tool with the given arguments. The ProgressReporter
+	// can be used to report operation progress, and RequestClientFunc enables
+	// client-server communication during execution.
 	// Returns error if tool not found, arguments are invalid, execution fails, or context is cancelled.
-	CallTool(ctx context.Context, params CallToolParams, requestClient RequestClientFunc) (CallToolResult, error)
+	CallTool(context.Context, CallToolParams, ProgressReporter, RequestClientFunc) (CallToolResult, error)
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
@@ -198,14 +189,6 @@ type ToolServer interface {
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type ToolListUpdater interface {
 	ToolListUpdates() <-chan struct{}
-}
-
-// ProgressReporter provides an interface for reporting progress updates on long-running operations.
-// It maintains a channel that emits progress updates for operations identified by progress tokens.
-type ProgressReporter interface {
-	// ProgressReports returns a channel that emits progress updates for operations.
-	// The channel remains open for the lifetime of the reporter and is safe for concurrent receives.
-	ProgressReports() <-chan ProgressParams
 }
 
 // LogHandler provides an interface for streaming log messages from the MCP server to connected clients.
@@ -344,45 +327,6 @@ type JSONRPCError struct {
 	// Data contains additional information about the error.
 	// The value is unstructured and may be omitted.
 	Data map[string]any `json:"data,omitempty"`
-}
-
-// SessionCtx represents a client session context in the MCP protocol.
-// It combines a context.Context for lifecycle management with a unique session identifier.
-type SessionCtx struct {
-	// Ctx controls the session lifecycle. It is cancelled when the session ends.
-	Ctx context.Context
-
-	// ID uniquely identifies the session within the transport.
-	// Must remain constant for the session duration.
-	ID string
-}
-
-// SessionMsg represents a message associated with a specific session.
-// It combines the session identifier with the JSON-RPC message payload.
-type SessionMsg struct {
-	// SessionID identifies which session this message belongs to.
-	// Must match an active session ID in the transport.
-	SessionID string
-
-	// Msg contains the JSON-RPC message payload.
-	// Can be a request, response, or notification.
-	Msg JSONRPCMessage
-}
-
-// SessionMsgWithErrs extends SessionMsg with an error reporting channel.
-// It enables asynchronous error handling for message processing operations.
-type SessionMsgWithErrs struct {
-	// SessionID identifies which session this message belongs to.
-	// Must match an active session ID in the transport.
-	SessionID string
-
-	// Msg contains the JSON-RPC message payload.
-	// Can be a request, response, or notification.
-	Msg JSONRPCMessage
-
-	// Errs receives exactly one error value after message processing completes.
-	// A nil error indicates successful processing.
-	Errs chan<- error
 }
 
 // Info contains metadata about a server or client instance including its name and version.
@@ -638,7 +582,7 @@ type ProgressParams struct {
 	// ProgressToken uniquely identifies the operation this progress update relates to
 	ProgressToken MustString `json:"progressToken"`
 	// Progress represents the current progress value
-	Progress float64 `json:"value"`
+	Progress float64 `json:"progress"`
 	// Total represents the expected final value when known.
 	// When non-zero, completion percentage can be calculated as (Progress/Total)*100
 	Total float64 `json:"total"`
@@ -673,10 +617,6 @@ type ParamsMeta struct {
 }
 
 // RootList represents a collection of root resources in the system.
-// Contains:
-// - Roots: Array of Root objects, each containing:
-//   - URI: A unique identifier for accessing the root resource
-//   - Name: A human-readable name for the root
 type RootList struct {
 	Roots []Root `json:"roots"`
 }
@@ -688,11 +628,6 @@ type Root struct {
 }
 
 // SamplingParams defines the parameters for generating a sampled message.
-// It provides complete control over the sampling process including:
-//   - Conversation history as a sequence of user and assistant messages
-//   - Model selection preferences for balancing cost, speed, and intelligence
-//   - System-level prompts that guide the model's behavior
-//   - Token limit constraints for the generated response
 //
 // The params are used by SamplingHandler.CreateSampleMessage to generate appropriate
 // AI model responses while respecting the specified constraints and preferences.
@@ -768,6 +703,12 @@ type Content struct {
 // ContentType represents the type of content in messages.
 type ContentType string
 
+// ProgressReporter is a function type used to report progress updates for long-running operations.
+// Server implementations use this callback to inform clients about operation progress by passing
+// a ProgressParams struct containing the progress details. When Total is non-zero in the params,
+// progress percentage can be calculated as (Progress/Total)*100.
+type ProgressReporter func(progress ProgressParams)
+
 // RequestClientFunc is a function type that handles JSON-RPC message communication between client and server.
 // It takes a JSON-RPC request message as input and returns the corresponding response message.
 //
@@ -775,14 +716,6 @@ type ContentType string
 // during method handling. For example, when a server needs to request additional information from
 // a client while processing a method call.
 //
-// Parameters:
-//   - msg: The JSON-RPC request message to send to the client
-//
-// Returns:
-//   - JSONRPCMessage: The response message from the client
-//   - error: Any error that occurred during the request-response cycle
-//
-// The implementation must handle timeouts, connection errors, and invalid responses appropriately.
 // It should respect the JSON-RPC 2.0 specification for error handling and message formatting.
 type RequestClientFunc func(msg JSONRPCMessage) (JSONRPCMessage, error)
 
@@ -846,6 +779,21 @@ type notificationsCancelledParams struct {
 
 type notificationsResourcesUpdatedParams struct {
 	URI string `json:"uri"`
+}
+
+type waitForResultReq struct {
+	msgID   string
+	resChan chan<- chan JSONRPCMessage
+}
+
+type cancelRequest struct {
+	msgID   string
+	ctxChan chan<- context.Context
+}
+
+type sessionMsg struct {
+	sessionID string
+	msg       JSONRPCMessage
 }
 
 const (

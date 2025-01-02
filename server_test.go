@@ -58,6 +58,7 @@ func (m mockServer) RequireSamplingClient() bool {
 func (m *mockPromptServer) ListPrompts(
 	_ context.Context,
 	params mcp.ListPromptsParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListPromptResult, error) {
 	m.listParams = params
@@ -67,6 +68,7 @@ func (m *mockPromptServer) ListPrompts(
 func (m *mockPromptServer) GetPrompt(
 	_ context.Context,
 	params mcp.GetPromptParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.GetPromptResult, error) {
 	m.getParams = params
@@ -89,6 +91,7 @@ func (m mockPromptListUpdater) PromptListUpdates() <-chan struct{} {
 func (m *mockResourceServer) ListResources(
 	_ context.Context,
 	params mcp.ListResourcesParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListResourcesResult, error) {
 	m.listParams = params
@@ -98,6 +101,7 @@ func (m *mockResourceServer) ListResources(
 func (m *mockResourceServer) ReadResource(
 	_ context.Context,
 	params mcp.ReadResourceParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ReadResourceResult, error) {
 	m.readParams = params
@@ -107,6 +111,7 @@ func (m *mockResourceServer) ReadResource(
 func (m *mockResourceServer) ListResourceTemplates(
 	_ context.Context,
 	params mcp.ListResourceTemplatesParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListResourceTemplatesResult, error) {
 	m.listTemplatesParams = params
@@ -141,6 +146,7 @@ func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() <-chan string
 func (m *mockToolServer) ListTools(
 	_ context.Context,
 	params mcp.ListToolsParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListToolsResult, error) {
 	m.listParams = params
@@ -150,6 +156,7 @@ func (m *mockToolServer) ListTools(
 func (m *mockToolServer) CallTool(
 	_ context.Context,
 	params mcp.CallToolParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.CallToolResult, error) {
 	m.callParams = params

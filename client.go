@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
+	"iter"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,28 +34,11 @@ type ServerRequirement struct {
 // A Client must be created using NewClient() and requires Connect() to be called
 // before any operations can be performed. The client should be properly closed
 // using Close() when it's no longer needed.
-//
-// Example usage:
-//
-//	client := NewClient(info, transport, requirement)
-//	if err := client.Connect(); err != nil {
-//	    log.Fatal(err)
-//	}
-//	defer client.Close()
-//
-//	// Use client methods...
-//	prompts, err := client.ListPrompts(ctx, ListPromptsParams{})
 type Client struct {
 	capabilities               ClientCapabilities
 	info                       Info
 	requiredServerCapabilities ServerCapabilities
 	transport                  ClientTransport
-
-	sessionID string
-	// clientRequests is a map of requestID to chan JSONRPCMessage, used for mapping the result to the original request
-	clientRequests sync.Map
-	// serverRequests is a map of requestID to request, used for cancelling requests
-	serverRequests sync.Map
 
 	rootsListHandler RootsListHandler
 	rootsListUpdater RootsListUpdater
@@ -76,9 +60,12 @@ type Client struct {
 	pingInterval time.Duration
 
 	initialized bool
+	logger      *slog.Logger
 
-	errsChan  chan error
-	closeChan chan struct{}
+	waitForResultChan  chan waitForResultReq
+	resultChan         chan JSONRPCMessage
+	registerCancelChan chan cancelRequest
+	cancelRequestChan  chan string
 }
 
 var (
@@ -192,10 +179,13 @@ func NewClient(
 	options ...ClientOption,
 ) *Client {
 	c := &Client{
-		info:      info,
-		transport: transport,
-		errsChan:  make(chan error),
-		closeChan: make(chan struct{}),
+		info:               info,
+		transport:          transport,
+		logger:             slog.Default(),
+		waitForResultChan:  make(chan waitForResultReq),
+		resultChan:         make(chan JSONRPCMessage),
+		registerCancelChan: make(chan cancelRequest),
+		cancelRequestChan:  make(chan string),
 	}
 	for _, opt := range options {
 		opt(c)
@@ -262,10 +252,6 @@ func NewClient(
 		c.requiredServerCapabilities.Logging = &LoggingCapability{}
 	}
 
-	if c.rootsListUpdater != nil {
-		go c.listenRootsList()
-	}
-
 	return c
 }
 
@@ -277,21 +263,23 @@ func NewClient(
 //
 // Connect must be called after creating a new client and before making any other client method calls.
 // It returns an error if the session cannot be established or if the initialization fails.
-func (c *Client) Connect() error {
-	sessID, err := c.transport.StartSession()
+func (c *Client) Connect(ctx context.Context, ready chan<- struct{}) error {
+	transportReady := make(chan error)
+	msgs, err := c.transport.StartSession(ctx, transportReady)
 	if err != nil {
 		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	go c.listenMessages()
-	go c.pings()
-
-	c.sessionID = sessID
-	if err := c.initialize(); err != nil {
-		return fmt.Errorf("failed to initialize client: %w", err)
+	if err = <-transportReady; err != nil {
+		return fmt.Errorf("failed to start session: %w", err)
 	}
 
-	return nil
+	initMsgID := uuid.New().String()
+	if err := c.sendInitialize(ctx, MustString(initMsgID)); err != nil {
+		return fmt.Errorf("failed to send initialize request: %w", err)
+	}
+
+	return c.listenMessages(ctx, initMsgID, msgs, ready)
 }
 
 // ListPrompts retrieves a paginated list of available prompts from the server.
@@ -303,6 +291,10 @@ func (c *Client) Connect() error {
 // See ListPromptsParams for details on available parameters including cursor for pagination
 // and optional progress tracking.
 func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (ListPromptResult, error) {
+	if !c.initialized {
+		return ListPromptResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ListPromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -337,6 +329,10 @@ func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (Lis
 // See GetPromptParams for details on available parameters including prompt name,
 // arguments, and optional progress tracking.
 func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (GetPromptResult, error) {
+	if !c.initialized {
+		return GetPromptResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return GetPromptResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -371,6 +367,10 @@ func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (GetProm
 // See CompletesCompletionParams for details on available parameters including
 // completion reference and argument information.
 func (c *Client) CompletesPrompt(ctx context.Context, params CompletesCompletionParams) (CompletionResult, error) {
+	if !c.initialized {
+		return CompletionResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CompletionResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -405,6 +405,10 @@ func (c *Client) CompletesPrompt(ctx context.Context, params CompletesCompletion
 // See ListResourcesParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
 func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) (ListResourcesResult, error) {
+	if !c.initialized {
+		return ListResourcesResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ListResourcesResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -439,6 +443,10 @@ func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) 
 // See ReadResourceParams for details on available parameters including resource URI
 // and optional progress tracking.
 func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (ReadResourceResult, error) {
+	if !c.initialized {
+		return ReadResourceResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ReadResourceResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -476,6 +484,10 @@ func (c *Client) ListResourceTemplates(
 	ctx context.Context,
 	params ListResourceTemplatesParams,
 ) (ListResourceTemplatesResult, error) {
+	if !c.initialized {
+		return ListResourceTemplatesResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ListResourceTemplatesResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -513,6 +525,10 @@ func (c *Client) CompletesResourceTemplate(
 	ctx context.Context,
 	params CompletesCompletionParams,
 ) (CompletionResult, error) {
+	if !c.initialized {
+		return CompletionResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CompletionResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -544,6 +560,10 @@ func (c *Client) CompletesResourceTemplate(
 //
 // See SubscribeResourceParams for details on available parameters including resource URI.
 func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResourceParams) error {
+	if !c.initialized {
+		return errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -570,6 +590,10 @@ func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResource
 //
 // See UnsubscribeResourceParams for details on available parameters including resource URI.
 func (c *Client) UnsubscribeResource(ctx context.Context, params UnsubscribeResourceParams) error {
+	if !c.initialized {
+		return errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
@@ -599,6 +623,10 @@ func (c *Client) UnsubscribeResource(ctx context.Context, params UnsubscribeReso
 // See ListToolsParams for details on available parameters including cursor for
 // pagination and optional progress tracking.
 func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ListToolsResult, error) {
+	if !c.initialized {
+		return ListToolsResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return ListToolsResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -633,6 +661,10 @@ func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ListToo
 // See CallToolParams for details on available parameters including tool name,
 // arguments, and optional progress tracking.
 func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolResult, error) {
+	if !c.initialized {
+		return CallToolResult{}, errors.New("client not initialized")
+	}
+
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
 		return CallToolResult{}, fmt.Errorf("failed to marshal params: %w", err)
@@ -665,6 +697,10 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 // by the LogLevel type. The server will adjust its logging output to match the
 // requested level.
 func (c *Client) SetLogLevel(level LogLevel) error {
+	if !c.initialized {
+		return errors.New("client not initialized")
+	}
+
 	params := LogParams{
 		Level: level,
 	}
@@ -688,66 +724,185 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 	return nil
 }
 
-// Errors returns a channel that provides access to errors encountered during
-// client operations. This includes transport errors, protocol violations,
-// and other operational issues that don't directly relate to specific method calls.
-//
-// The returned channel is receive-only and will be closed when the client is closed.
-// Clients should monitor this channel to detect and handle operational issues.
-//
-// Note that method-specific errors are returned directly by the respective methods
-// and won't appear on this channel.
-func (c *Client) Errors() <-chan error {
-	return c.errsChan
+func (c *Client) start(ctx context.Context) {
+	pingTicker := time.NewTicker(c.pingInterval)
+	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
+	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
+
+	var rlUpdates <-chan struct{}
+	if c.rootsListUpdater != nil {
+		rlUpdates = c.rootsListUpdater.RootsListUpdates()
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-pingTicker.C:
+			go c.ping(ctx)
+		case req := <-c.waitForResultChan:
+			resChan := make(chan JSONRPCMessage)
+			waitForResults[req.msgID] = resChan
+			req.resChan <- resChan
+		case msg := <-c.resultChan:
+			resChan, ok := waitForResults[string(msg.ID)]
+			if !ok {
+				continue
+			}
+			resChan <- msg
+			delete(waitForResults, string(msg.ID))
+		case cancelReq := <-c.registerCancelChan:
+			cancelCtx, cancel := context.WithCancel(ctx)
+			cancelReq.ctxChan <- cancelCtx
+			cancels[cancelReq.msgID] = cancel
+		case msgID := <-c.cancelRequestChan:
+			cancel, ok := cancels[msgID]
+			if !ok {
+				continue
+			}
+			cancel()
+			delete(cancels, msgID)
+		case <-rlUpdates:
+			if err := c.sendNotification(ctx, methodNotificationsRootsListChanged, nil); err != nil {
+				c.logger.Error("failed to send notification on roots list change", "err", err)
+			}
+		}
+	}
 }
 
-// Close terminates the client's connection to the server and releases all associated resources.
-// It closes the error channel, stops all background routines, and terminates the transport connection.
-//
-// After Close is called, the client cannot be reused. A new client must be created to establish
-// another connection.
-func (c *Client) Close() {
-	close(c.errsChan)
-	close(c.closeChan)
-	c.transport.Close()
+func (c *Client) ping(ctx context.Context) {
+	wCtx, wCancel := context.WithTimeout(ctx, c.writeTimeout)
+	defer wCancel()
+
+	res, err := c.sendRequest(wCtx, JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  methodPing,
+	})
+	if err != nil {
+		c.logger.Error("failed to send ping", "err", err)
+		return
+	}
+	if res.Error != nil {
+		c.logger.Error("error response", "err", res.Error)
+	}
 }
 
-func (c *Client) initialize() error {
-	sCtx, sCancel := context.WithTimeout(context.Background(), c.writeTimeout)
-	defer sCancel()
+func (c *Client) listenMessages(
+	ctx context.Context,
+	initMsgID string,
+	msgs iter.Seq[JSONRPCMessage],
+	ready chan<- struct{},
+) error {
+	defer close(ready)
 
+	for msg := range msgs {
+		if msg.JSONRPC != JSONRPCVersion {
+			c.logger.Error("invalid jsonrpc version", "version", msg.JSONRPC)
+			continue
+		}
+
+		switch msg.Method {
+		case methodPing:
+			if err := c.sendResult(ctx, msg.ID, nil); err != nil {
+				c.logger.Error("failed to handle ping", "err", err)
+			}
+		case MethodRootsList:
+			go c.handleListRoots(ctx, msg)
+		case MethodSamplingCreateMessage:
+			go c.handleSamplingMessages(ctx, msg)
+		case methodNotificationsPromptsListChanged:
+			if c.resourceListWatcher != nil {
+				c.resourceListWatcher.OnResourceListChanged()
+			}
+		case methodNotificationsResourcesListChanged:
+			if c.resourceListWatcher != nil {
+				c.resourceListWatcher.OnResourceListChanged()
+			}
+		case methodNotificationsResourcesUpdated:
+			if c.resourceSubscribedWatcher != nil {
+				var params SubscribeResourceParams
+				if err := json.Unmarshal(msg.Params, &params); err != nil {
+					c.logger.Error("failed to unmarshal resources subscribe params", "err", err)
+					continue
+				}
+				c.resourceSubscribedWatcher.OnResourceSubscribedChanged(params.URI)
+			}
+		case methodNotificationsToolsListChanged:
+			if c.toolListWatcher != nil {
+				c.toolListWatcher.OnToolListChanged()
+			}
+		case methodNotificationsProgress:
+			if c.progressListener == nil {
+				continue
+			}
+
+			var params ProgressParams
+			if err := json.Unmarshal(msg.Params, &params); err != nil {
+				c.logger.Error("failed to unmarshal progress params", "err", err)
+				continue
+			}
+			c.progressListener.OnProgress(params)
+		case methodNotificationsMessage:
+			if c.logReceiver == nil {
+				continue
+			}
+
+			var params LogParams
+			if err := json.Unmarshal(msg.Params, &params); err != nil {
+				c.logger.Error("failed to unmarshal log params", "err", err)
+				continue
+			}
+			c.logReceiver.OnLog(params)
+		case methodNotificationsCancelled:
+			c.cancelRequestChan <- string(msg.ID)
+		case "":
+			if string(msg.ID) == initMsgID {
+				if err := c.handleInitialize(ctx, msg); err != nil {
+					return err
+				}
+				go c.start(ctx)
+				ready <- struct{}{}
+				continue
+			}
+			c.resultChan <- msg
+		}
+	}
+
+	return nil
+}
+
+func (c *Client) sendInitialize(ctx context.Context, msgID MustString) error {
 	params := initializeParams{
 		ProtocolVersion: protocolVersion,
 		Capabilities:    c.capabilities,
 		ClientInfo:      c.info,
 	}
-
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
-		return fmt.Errorf("failed to marshal params: %w", err)
+		return fmt.Errorf("failed to marshal initialize params: %w", err)
 	}
 
-	res, err := c.sendRequest(sCtx, JSONRPCMessage{
+	return c.transport.Send(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
+		ID:      msgID,
 		Method:  methodInitialize,
 		Params:  paramsBs,
 	})
-	if err != nil {
-		return fmt.Errorf("failed to send initialize request: %w", err)
-	}
+}
 
-	if res.Error != nil {
-		return res.Error
+func (c *Client) handleInitialize(ctx context.Context, msg JSONRPCMessage) error {
+	if msg.Error != nil {
+		return fmt.Errorf("initialize error: %w", msg.Error)
 	}
 
 	var result initializeResult
-	if err := json.Unmarshal(res.Result, &result); err != nil {
+	if err := json.Unmarshal(msg.Result, &result); err != nil {
 		return fmt.Errorf("failed to unmarshal initialize result: %w", err)
 	}
 
 	if result.ProtocolVersion != protocolVersion {
 		nErr := fmt.Errorf("protocol version mismatch: %s != %s", result.ProtocolVersion, protocolVersion)
-		if err := c.sendError(context.Background(), res.ID, JSONRPCError{
+		if err := c.sendError(ctx, msg.ID, JSONRPCError{
 			Code:    jsonRPCInvalidParamsCode,
 			Message: errMsgUnsupportedProtocolVersion,
 			Data:    map[string]any{"error": nErr},
@@ -759,7 +914,7 @@ func (c *Client) initialize() error {
 
 	if err := c.checkCapabilities(result, c.requiredServerCapabilities); err != nil {
 		nErr := fmt.Errorf("failed to check capabilities: %w", err)
-		if err := c.sendError(context.Background(), res.ID, JSONRPCError{
+		if err := c.sendError(context.Background(), msg.ID, JSONRPCError{
 			Code:    jsonRPCInvalidParamsCode,
 			Message: errMsgInsufficientClientCapabilities,
 			Data:    map[string]any{"error": err},
@@ -772,6 +927,43 @@ func (c *Client) initialize() error {
 	c.initialized = true
 
 	return c.sendNotification(context.Background(), methodNotificationsInitialized, nil)
+}
+
+func (c *Client) handleListRoots(ctx context.Context, msg JSONRPCMessage) {
+	if c.rootsListHandler == nil {
+		return
+	}
+
+	roots, err := c.rootsListHandler.RootsList(ctx)
+	if err != nil {
+		c.logger.Error("failed to list roots", "err", err)
+		return
+	}
+	if err := c.sendResult(ctx, msg.ID, roots); err != nil {
+		c.logger.Error("failed to send result", "err", err)
+	}
+}
+
+func (c *Client) handleSamplingMessages(ctx context.Context, msg JSONRPCMessage) {
+	if c.samplingHandler == nil {
+		return
+	}
+
+	var params SamplingParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		c.logger.Error("failed to unmarshal sampling params", "err", err)
+		return
+	}
+
+	result, err := c.samplingHandler.CreateSampleMessage(ctx, params)
+	if err != nil {
+		c.logger.Error("failed to create sample message", "err", err)
+		return
+	}
+
+	if err := c.sendResult(ctx, msg.ID, result); err != nil {
+		c.logger.Error("failed to send result", "err", err)
+	}
 }
 
 func (c *Client) checkCapabilities(result initializeResult, requiredServerCap ServerCapabilities) error {
@@ -830,304 +1022,28 @@ func (c *Client) checkCapabilities(result initializeResult, requiredServerCap Se
 	return nil
 }
 
-func (c *Client) listenRootsList() {
-	lists := c.rootsListUpdater.RootsListUpdates()
-	for {
-		select {
-		case <-c.closeChan:
-			return
-		case <-lists:
-		}
-		if err := c.sendNotification(context.Background(), methodNotificationsRootsListChanged, nil); err != nil {
-			c.logError(fmt.Errorf("failed to send notification on roots list change: %w", err))
-		}
-	}
-}
-
-func (c *Client) listenMessages() {
-	msgs := c.transport.SessionMessages()
-
-	var msg SessionMsgWithErrs
-	for {
-		select {
-		case <-c.closeChan:
-			return
-		case msg = <-msgs:
-		}
-
-		if msg.SessionID != c.sessionID {
-			msg.Errs <- fmt.Errorf("invalid session ID: %s", msg.SessionID)
-			return
-		}
-
-		msg.Errs <- c.handleMsg(msg.Msg)
-	}
-}
-
-func (c *Client) pings() {
-	pingTicker := time.NewTicker(c.pingInterval)
-
-	for {
-		select {
-		case <-c.closeChan:
-			return
-		case <-pingTicker.C:
-			c.ping()
-		}
-	}
-}
-
-func (c *Client) ping() {
-	wCtx, wCancel := context.WithTimeout(context.Background(), c.writeTimeout)
-	defer wCancel()
-
-	res, err := c.sendRequest(wCtx, JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		Method:  methodPing,
-	})
-	if err != nil {
-		c.logError(fmt.Errorf("failed to send ping: %w", err))
-		return
-	}
-	if res.Error != nil {
-		c.logError(fmt.Errorf("error response: %w", res.Error))
-	}
-}
-
-func (c *Client) handleMsg(msg JSONRPCMessage) error {
-	if msg.JSONRPC != JSONRPCVersion {
-		nErr := fmt.Errorf("invalid jsonrpc version: %s", msg.JSONRPC)
-		c.logError(nErr)
-		return nErr
-	}
-
-	// Handle basic protocol messages
-	if err := c.handleBasicMessages(msg); err != nil {
-		return err
-	}
-
-	// Handle root-related messages
-	if err := c.handleRootMessages(msg); err != nil {
-		return err
-	}
-
-	// Handle sampling-related messages
-	if err := c.handleSamplingMessages(msg); err != nil {
-		return err
-	}
-
-	// Handle notification messages
-	if err := c.handleNotificationMessages(msg); err != nil {
-		return err
-	}
-
-	// Handle result messages
-	if err := c.handleResultMessages(msg); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Client) handleBasicMessages(msg JSONRPCMessage) error {
-	if msg.Method != methodPing {
-		return nil
-	}
-	if err := c.sendResult(context.Background(), msg.ID, nil); err != nil {
-		nErr := fmt.Errorf("failed to handle ping: %w", err)
-		c.logError(nErr)
-		return nErr
-	}
-
-	return nil
-}
-
-func (c *Client) handleRootMessages(msg JSONRPCMessage) error {
-	if c.rootsListHandler == nil {
-		return nil
-	}
-
-	if msg.Method != MethodRootsList {
-		return nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	c.serverRequests.Store(msg.ID, &request{
-		ctx:    ctx,
-		cancel: cancel,
-	})
-
-	rl, err := c.rootsListHandler.RootsList(ctx)
-	if err != nil {
-		nErr := fmt.Errorf("failed to list roots: %w", err)
-		if err := c.sendError(ctx, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
-		}); err != nil {
-			nErr = fmt.Errorf("%w: failed to send error on roots list: %w", nErr, err)
-		}
-		c.logError(nErr)
-		return nErr
-	}
-
-	if err := c.sendResult(ctx, msg.ID, rl); err != nil {
-		nErr := fmt.Errorf("failed to send result on roots list: %w", err)
-		c.logError(nErr)
-		return nErr
-	}
-
-	return nil
-}
-
-func (c *Client) handleSamplingMessages(msg JSONRPCMessage) error {
-	if c.samplingHandler == nil {
-		return nil
-	}
-
-	if msg.Method != MethodSamplingCreateMessage {
-		return nil
-	}
-	var params SamplingParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		nErr := fmt.Errorf("failed to unmarshal sampling params: %w", err)
-		c.logError(nErr)
-		return nErr
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	c.serverRequests.Store(msg.ID, &request{
-		ctx:    ctx,
-		cancel: cancel,
-	})
-
-	rl, err := c.samplingHandler.CreateSampleMessage(ctx, params)
-	if err != nil {
-		nErr := fmt.Errorf("failed to create sample message: %w", err)
-		if err := c.sendError(ctx, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
-		}); err != nil {
-			nErr = fmt.Errorf("%w: failed to send error on create sample message: %w", nErr, err)
-		}
-		c.logError(nErr)
-		return nErr
-	}
-
-	if err := c.sendResult(ctx, msg.ID, rl); err != nil {
-		nErr := fmt.Errorf("failed to send result on create sample message: %w", err)
-		c.logError(nErr)
-		return nErr
-	}
-
-	return nil
-}
-
-func (c *Client) handleNotificationMessages(msg JSONRPCMessage) error {
-	switch msg.Method {
-	case methodNotificationsCancelled:
-		var params notificationsCancelledParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			nErr := fmt.Errorf("failed to unmarshal notifications cancelled params: %w", err)
-			c.logError(nErr)
-			return nErr
-		}
-		c.handleNotificationsCancelled(params)
-	case methodNotificationsPromptsListChanged:
-		if c.promptListWatcher != nil {
-			c.promptListWatcher.OnPromptListChanged()
-		}
-	case methodNotificationsResourcesListChanged:
-		if c.resourceListWatcher != nil {
-			c.resourceListWatcher.OnResourceListChanged()
-		}
-	case methodNotificationsResourcesUpdated:
-		if c.resourceSubscribedWatcher != nil {
-			var params SubscribeResourceParams
-			if err := json.Unmarshal(msg.Params, &params); err != nil {
-				nErr := fmt.Errorf("failed to unmarshal resources subscribe params: %w", err)
-				c.logError(nErr)
-				return nErr
-			}
-			c.resourceSubscribedWatcher.OnResourceSubscribedChanged(params.URI)
-		}
-	case methodNotificationsToolsListChanged:
-		if c.toolListWatcher != nil {
-			c.toolListWatcher.OnToolListChanged()
-		}
-	case methodNotificationsProgress:
-		if c.progressListener == nil {
-			return nil
-		}
-
-		var params ProgressParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			c.logError(fmt.Errorf("failed to unmarshal progress params: %w", err))
-			return nil
-		}
-		c.progressListener.OnProgress(params)
-	case methodNotificationsMessage:
-		if c.logReceiver == nil {
-			return nil
-		}
-
-		var params LogParams
-		if err := json.Unmarshal(msg.Params, &params); err != nil {
-			c.logError(fmt.Errorf("failed to unmarshal log params: %w", err))
-			return nil
-		}
-		c.logReceiver.OnLog(params)
-	}
-
-	return nil
-}
-
-func (c *Client) handleResultMessages(msg JSONRPCMessage) error {
-	if msg.Method != "" {
-		return nil
-	}
-	reqID := string(msg.ID)
-	rc, ok := c.clientRequests.Load(reqID)
-	if !ok {
-		return nil
-	}
-	resChan, _ := rc.(chan JSONRPCMessage)
-	resChan <- msg
-	return nil
-}
-
-func (c *Client) handleNotificationsCancelled(params notificationsCancelledParams) {
-	r, ok := c.serverRequests.Load(params.RequestID)
-	if !ok {
-		return
-	}
-	req, _ := r.(request)
-	req.cancel()
-}
-
-func (c *Client) registerRequest() (string, chan JSONRPCMessage) {
-	reqID := uuid.New().String()
-	resChan := make(chan JSONRPCMessage)
-	c.clientRequests.Store(reqID, resChan)
-	return reqID, resChan
-}
-
 func (c *Client) sendRequest(ctx context.Context, msg JSONRPCMessage) (JSONRPCMessage, error) {
-	reqID, resChan := c.registerRequest()
-	msg.ID = MustString(reqID)
+	msgID := uuid.New().String()
+	msg.ID = MustString(msgID)
+
+	resChanChan := make(chan chan JSONRPCMessage)
+	wfrReq := waitForResultReq{
+		msgID:   msgID,
+		resChan: resChanChan,
+	}
+
+	select {
+	case <-ctx.Done():
+		return JSONRPCMessage{}, errors.New("client closed")
+	case c.waitForResultChan <- wfrReq:
+	}
+
+	resChan := <-resChanChan
 
 	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer sCancel()
 
-	if err := c.transport.Send(sCtx, SessionMsg{
-		SessionID: c.sessionID,
-		Msg:       msg,
-	}); err != nil {
+	if err := c.transport.Send(sCtx, msg); err != nil {
 		return JSONRPCMessage{}, err
 	}
 
@@ -1143,8 +1059,9 @@ func (c *Client) sendRequest(ctx context.Context, msg JSONRPCMessage) (JSONRPCMe
 		if !errors.Is(err, context.Canceled) {
 			return JSONRPCMessage{}, err
 		}
-		nErr := c.sendNotification(context.Background(), methodNotificationsCancelled, notificationsCancelledParams{
-			RequestID: reqID,
+		err = nil
+		nErr := c.sendNotification(ctx, methodNotificationsCancelled, notificationsCancelledParams{
+			RequestID: msgID,
 			Reason:    userCancelledReason,
 		})
 		if nErr != nil {
@@ -1172,10 +1089,7 @@ func (c *Client) sendNotification(ctx context.Context, method string, params any
 	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer sCancel()
 
-	if err := c.transport.Send(sCtx, SessionMsg{
-		SessionID: c.sessionID,
-		Msg:       notif,
-	}); err != nil {
+	if err := c.transport.Send(sCtx, notif); err != nil {
 		return fmt.Errorf("failed to send notification: %w", err)
 	}
 
@@ -1197,10 +1111,7 @@ func (c *Client) sendResult(ctx context.Context, id MustString, result any) erro
 	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer sCancel()
 
-	if err := c.transport.Send(sCtx, SessionMsg{
-		SessionID: c.sessionID,
-		Msg:       msg,
-	}); err != nil {
+	if err := c.transport.Send(sCtx, msg); err != nil {
 		return fmt.Errorf("failed to send result: %w", err)
 	}
 
@@ -1208,6 +1119,7 @@ func (c *Client) sendResult(ctx context.Context, id MustString, result any) erro
 }
 
 func (c *Client) sendError(ctx context.Context, id MustString, err JSONRPCError) error {
+	c.logger.Error("request error", "err", err)
 	msg := JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		ID:      id,
@@ -1217,19 +1129,9 @@ func (c *Client) sendError(ctx context.Context, id MustString, err JSONRPCError)
 	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer sCancel()
 
-	if err := c.transport.Send(sCtx, SessionMsg{
-		SessionID: c.sessionID,
-		Msg:       msg,
-	}); err != nil {
+	if err := c.transport.Send(sCtx, msg); err != nil {
 		return fmt.Errorf("failed to send error: %w", err)
 	}
 
 	return nil
-}
-
-func (c *Client) logError(err error) {
-	select {
-	case c.errsChan <- err:
-	default:
-	}
 }
