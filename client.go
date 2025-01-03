@@ -62,10 +62,10 @@ type Client struct {
 	initialized bool
 	logger      *slog.Logger
 
-	waitForResultChan  chan waitForResultReq
-	resultChan         chan JSONRPCMessage
-	registerCancelChan chan cancelRequest
-	cancelRequestChan  chan string
+	waitForResults  chan waitForResultReq
+	results         chan JSONRPCMessage
+	registerCancels chan cancelRequest
+	cancelRequests  chan string
 }
 
 var (
@@ -179,13 +179,13 @@ func NewClient(
 	options ...ClientOption,
 ) *Client {
 	c := &Client{
-		info:               info,
-		transport:          transport,
-		logger:             slog.Default(),
-		waitForResultChan:  make(chan waitForResultReq),
-		resultChan:         make(chan JSONRPCMessage),
-		registerCancelChan: make(chan cancelRequest),
-		cancelRequestChan:  make(chan string),
+		info:            info,
+		transport:       transport,
+		logger:          slog.Default(),
+		waitForResults:  make(chan waitForResultReq),
+		results:         make(chan JSONRPCMessage),
+		registerCancels: make(chan cancelRequest),
+		cancelRequests:  make(chan string),
 	}
 	for _, opt := range options {
 		opt(c)
@@ -708,20 +708,11 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal params: %w", err)
 	}
-	res, err := c.sendRequest(context.Background(), JSONRPCMessage{
+	return c.sendRequestWithoutResult(context.Background(), JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		Method:  MethodLoggingSetLevel,
 		Params:  paramsBs,
 	})
-	if err != nil {
-		return err
-	}
-
-	if res.Error != nil {
-		return fmt.Errorf("result error: %w", res.Error)
-	}
-
-	return nil
 }
 
 func (c *Client) start(ctx context.Context) {
@@ -740,22 +731,22 @@ func (c *Client) start(ctx context.Context) {
 			return
 		case <-pingTicker.C:
 			go c.ping(ctx)
-		case req := <-c.waitForResultChan:
+		case req := <-c.waitForResults:
 			resChan := make(chan JSONRPCMessage)
 			waitForResults[req.msgID] = resChan
 			req.resChan <- resChan
-		case msg := <-c.resultChan:
+		case msg := <-c.results:
 			resChan, ok := waitForResults[string(msg.ID)]
 			if !ok {
 				continue
 			}
 			resChan <- msg
 			delete(waitForResults, string(msg.ID))
-		case cancelReq := <-c.registerCancelChan:
+		case cancelReq := <-c.registerCancels:
 			cancelCtx, cancel := context.WithCancel(ctx)
 			cancelReq.ctxChan <- cancelCtx
 			cancels[cancelReq.msgID] = cancel
-		case msgID := <-c.cancelRequestChan:
+		case msgID := <-c.cancelRequests:
 			cancel, ok := cancels[msgID]
 			if !ok {
 				continue
@@ -854,7 +845,7 @@ func (c *Client) listenMessages(
 			}
 			c.logReceiver.OnLog(params)
 		case methodNotificationsCancelled:
-			c.cancelRequestChan <- string(msg.ID)
+			c.cancelRequests <- string(msg.ID)
 		case "":
 			if string(msg.ID) == initMsgID {
 				if err := c.handleInitialize(ctx, msg); err != nil {
@@ -864,7 +855,7 @@ func (c *Client) listenMessages(
 				ready <- struct{}{}
 				continue
 			}
-			c.resultChan <- msg
+			c.results <- msg
 		}
 	}
 
@@ -1022,23 +1013,30 @@ func (c *Client) checkCapabilities(result initializeResult, requiredServerCap Se
 	return nil
 }
 
+func (c *Client) sendRequestWithoutResult(ctx context.Context, msg JSONRPCMessage) error {
+	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
+	defer sCancel()
+
+	return c.transport.Send(sCtx, msg)
+}
+
 func (c *Client) sendRequest(ctx context.Context, msg JSONRPCMessage) (JSONRPCMessage, error) {
 	msgID := uuid.New().String()
 	msg.ID = MustString(msgID)
 
-	resChanChan := make(chan chan JSONRPCMessage)
+	resChannels := make(chan chan JSONRPCMessage)
 	wfrReq := waitForResultReq{
 		msgID:   msgID,
-		resChan: resChanChan,
+		resChan: resChannels,
 	}
 
 	select {
 	case <-ctx.Done():
 		return JSONRPCMessage{}, errors.New("client closed")
-	case c.waitForResultChan <- wfrReq:
+	case c.waitForResults <- wfrReq:
 	}
 
-	resChan := <-resChanChan
+	results := <-resChannels
 
 	sCtx, sCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer sCancel()
@@ -1068,7 +1066,7 @@ func (c *Client) sendRequest(ctx context.Context, msg JSONRPCMessage) (JSONRPCMe
 			err = fmt.Errorf("%w: failed to send notification: %w", err, nErr)
 		}
 		return JSONRPCMessage{}, err
-	case resMsg = <-resChan:
+	case resMsg = <-results:
 	}
 
 	return resMsg, nil

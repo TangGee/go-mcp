@@ -196,7 +196,7 @@ type ToolListUpdater interface {
 type LogHandler interface {
 	// LogStreams returns a channel that emits log messages with metadata.
 	// The channel remains open for the lifetime of the handler and is safe for concurrent receives.
-	LogStreams() <-chan LogParams
+	LogStreams() iter.Seq[LogParams]
 
 	// SetLogLevel configures the minimum severity level for emitted log messages.
 	// Messages below this level are filtered out.

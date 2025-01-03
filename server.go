@@ -80,6 +80,9 @@ var (
 // a graceful shutdown by closing all active sessions and cleaning up resources.
 func Serve(ctx context.Context, server Server, transport ServerTransport, options ...ServerOption) {
 	s := newServer(server, transport, options...)
+	if s.logHandler != nil {
+		go s.listenLogs()
+	}
 	go s.listenNotifications()
 	go s.listenSessions()
 	s.start(ctx)
@@ -359,6 +362,26 @@ func (s server) ping(sessID string) {
 	}
 }
 
+func (s server) listenLogs() {
+	for params := range s.logHandler.LogStreams() {
+		paramsBs, err := json.Marshal(params)
+		if err != nil {
+			s.logger.Error("failed to marshal log params", "err", err)
+			continue
+		}
+		msg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
+			Method:  methodNotificationsMessage,
+			Params:  paramsBs,
+		}
+		select {
+		case <-s.done:
+			return
+		case s.broadcasts <- msg:
+		}
+	}
+}
+
 func (s server) listenNotifications() {
 	var plUpdates <-chan struct{}
 	if s.promptListUpdater != nil {
@@ -378,11 +401,6 @@ func (s server) listenNotifications() {
 	var tlUpdates <-chan struct{}
 	if s.toolListUpdater != nil {
 		tlUpdates = s.toolListUpdater.ToolListUpdates()
-	}
-
-	var logs <-chan LogParams
-	if s.logHandler != nil {
-		logs = s.logHandler.LogStreams()
 	}
 
 	var msg JSONRPCMessage
@@ -419,17 +437,6 @@ func (s server) listenNotifications() {
 			msg = JSONRPCMessage{
 				JSONRPC: JSONRPCVersion,
 				Method:  methodNotificationsToolsListChanged,
-			}
-		case params := <-logs:
-			paramsBs, err := json.Marshal(params)
-			if err != nil {
-				s.logger.Error("failed to marshal log params", "err", err)
-				continue
-			}
-			msg = JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				Method:  methodNotificationsMessage,
-				Params:  paramsBs,
 			}
 		}
 

@@ -34,65 +34,6 @@ type testSuiteConfig struct {
 	serverRequirement mcp.ServerRequirement
 }
 
-func (t *testSuite) setup() {
-	if t.cfg.transportName == "SSE" {
-		t.serverTransport, t.clientTransport, t.httpServer = setupSSE()
-	} else {
-		t.serverTransport, t.clientTransport = setupStdIO()
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	t.cancel = cancel
-
-	go mcp.Serve(ctx, t.cfg.server, t.serverTransport, t.cfg.serverOptions...)
-
-	t.mcpClient = mcp.NewClient(mcp.Info{
-		Name:    "test-client",
-		Version: "1.0",
-	}, t.clientTransport, t.cfg.serverRequirement, t.cfg.clientOptions...)
-
-	ready := make(chan struct{})
-	errs := make(chan error)
-
-	go func() {
-		errs <- t.mcpClient.Connect(ctx, ready)
-	}()
-
-	timeout := time.After(50 * time.Millisecond)
-
-	select {
-	case <-timeout:
-	case t.clientConnectErr = <-errs:
-	}
-	<-ready
-}
-
-func (t *testSuite) teardown() {
-	t.cancel()
-	if t.cfg.transportName == "SSE" {
-		sseServer, _ := t.serverTransport.(mcp.SSEServer)
-		t.httpServer.Close()
-		sseServer.Close()
-		return
-	}
-	srvIO, _ := t.serverTransport.(mcp.StdIO)
-	cliIO, _ := t.clientTransport.(mcp.StdIO)
-	srvIO.Close()
-	cliIO.Close()
-}
-
-func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
-	return func(t *testing.T) {
-		s := &testSuite{
-			cfg: cfg,
-		}
-		s.setup()
-		defer s.teardown()
-
-		test(t, s)
-	}
-}
-
 func TestInitialize(t *testing.T) {
 	type testCase struct {
 		name              string
@@ -130,7 +71,7 @@ func TestInitialize(t *testing.T) {
 				mcp.WithResourceSubscribedUpdater(mockResourceSubscribedUpdater{}),
 				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithToolListUpdater(mockToolListUpdater{}),
-				mcp.WithLogHandler(mockLogHandler{}),
+				mcp.WithLogHandler(&mockLogHandler{}),
 				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 			},
 			clientOptions: []mcp.ClientOption{
@@ -141,7 +82,7 @@ func TestInitialize(t *testing.T) {
 				mcp.WithRootsListHandler(mockRootsListHandler{}),
 				mcp.WithRootsListUpdater(mockRootsListUpdater{}),
 				mcp.WithSamplingHandler(mockSamplingHandler{}),
-				mcp.WithLogReceiver(mockLogReceiver{}),
+				mcp.WithLogReceiver(&mockLogReceiver{}),
 			},
 			serverRequirement: mcp.ServerRequirement{
 				PromptServer:   true,
@@ -170,7 +111,7 @@ func TestInitialize(t *testing.T) {
 			serverOptions: []mcp.ServerOption{
 				mcp.WithPromptServer(&mockPromptServer{}),
 				mcp.WithToolServer(&mockToolServer{}),
-				mcp.WithLogHandler(mockLogHandler{}),
+				mcp.WithLogHandler(&mockLogHandler{}),
 				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 			},
 			clientOptions: []mcp.ClientOption{},
@@ -207,8 +148,63 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
+func TestLog(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		handler := mockLogHandler{
+			params: make(chan mcp.LogParams),
+		}
+		receiver := &mockLogReceiver{}
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			server:        &mockServer{},
+			serverOptions: []mcp.ServerOption{
+				mcp.WithLogHandler(&handler),
+			},
+			clientOptions: []mcp.ClientOption{
+				mcp.WithLogReceiver(receiver),
+			},
+			serverRequirement: mcp.ServerRequirement{
+				PromptServer:   false,
+				ResourceServer: false,
+				ToolServer:     false,
+			},
+		}
+
+		t.Run(fmt.Sprintf("%s/LogStream", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			handler.level = mcp.LogLevelDebug
+			for i := 0; i < 10; i++ {
+				handler.params <- mcp.LogParams{}
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			receiver.lock.Lock()
+			defer receiver.lock.Unlock()
+			if len(receiver.params) != 10 {
+				t.Errorf("expected 10 log params, got %d", len(receiver.params))
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/SetLogLevel", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			err := s.mcpClient.SetLogLevel(mcp.LogLevelError)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			handler.lock.Lock()
+			defer handler.lock.Unlock()
+			if handler.level != mcp.LogLevelError {
+				t.Errorf("expected log level %d, got %d", mcp.LogLevelError, handler.level)
+			}
+		}))
+	}
+}
+
 //nolint:gocognit
-func TestPrimitives(t *testing.T) {
+func TestClientRequest(t *testing.T) {
 	type testCase struct {
 		name              string
 		testType          string // "prompt", "resource", or "tool"
@@ -488,6 +484,18 @@ func TestPrimitives(t *testing.T) {
 	}
 }
 
+func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
+	return func(t *testing.T) {
+		s := &testSuite{
+			cfg: cfg,
+		}
+		s.setup()
+		defer s.teardown()
+
+		test(t, s)
+	}
+}
+
 func setupSSE() (mcp.SSEServer, *mcp.SSEClient, *httptest.Server) {
 	mux := http.NewServeMux()
 	httpSrv := httptest.NewServer(mux)
@@ -514,4 +522,51 @@ func setupStdIO() (mcp.StdIO, mcp.StdIO) {
 	cliIO := mcp.NewStdIO(cliReader, srvWriter)
 
 	return srvIO, cliIO
+}
+
+func (t *testSuite) setup() {
+	if t.cfg.transportName == "SSE" {
+		t.serverTransport, t.clientTransport, t.httpServer = setupSSE()
+	} else {
+		t.serverTransport, t.clientTransport = setupStdIO()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.cancel = cancel
+
+	go mcp.Serve(ctx, t.cfg.server, t.serverTransport, t.cfg.serverOptions...)
+
+	t.mcpClient = mcp.NewClient(mcp.Info{
+		Name:    "test-client",
+		Version: "1.0",
+	}, t.clientTransport, t.cfg.serverRequirement, t.cfg.clientOptions...)
+
+	ready := make(chan struct{})
+	errs := make(chan error)
+
+	go func() {
+		errs <- t.mcpClient.Connect(ctx, ready)
+	}()
+
+	timeout := time.After(50 * time.Millisecond)
+
+	select {
+	case <-timeout:
+	case t.clientConnectErr = <-errs:
+	}
+	<-ready
+}
+
+func (t *testSuite) teardown() {
+	t.cancel()
+	if t.cfg.transportName == "SSE" {
+		sseServer, _ := t.serverTransport.(mcp.SSEServer)
+		t.httpServer.Close()
+		sseServer.Close()
+		return
+	}
+	srvIO, _ := t.serverTransport.(mcp.StdIO)
+	cliIO, _ := t.clientTransport.(mcp.StdIO)
+	srvIO.Close()
+	cliIO.Close()
 }

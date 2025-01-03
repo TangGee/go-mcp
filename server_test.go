@@ -2,6 +2,8 @@ package mcp_test
 
 import (
 	"context"
+	"iter"
+	"sync"
 
 	"github.com/MegaGrindStone/go-mcp"
 )
@@ -39,7 +41,11 @@ type mockToolServer struct {
 
 type mockToolListUpdater struct{}
 
-type mockLogHandler struct{}
+type mockLogHandler struct {
+	lock   sync.Mutex
+	level  mcp.LogLevel
+	params chan mcp.LogParams
+}
 
 type mockRootsListWatcher struct{}
 
@@ -167,11 +173,20 @@ func (m mockToolListUpdater) ToolListUpdates() <-chan struct{} {
 	return nil
 }
 
-func (m mockLogHandler) LogStreams() <-chan mcp.LogParams {
-	return nil
+func (m *mockLogHandler) LogStreams() iter.Seq[mcp.LogParams] {
+	return func(yield func(mcp.LogParams) bool) {
+		for params := range m.params {
+			if !yield(params) {
+				return
+			}
+		}
+	}
 }
 
-func (m mockLogHandler) SetLogLevel(mcp.LogLevel) {
+func (m *mockLogHandler) SetLogLevel(level mcp.LogLevel) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.level = level
 }
 
 func (m mockRootsListWatcher) OnRootsListChanged() {
