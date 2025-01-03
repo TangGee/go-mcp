@@ -12,6 +12,87 @@ import (
 	"github.com/MegaGrindStone/go-mcp"
 )
 
+type testSuite struct {
+	cfg testSuiteConfig
+
+	cancel          context.CancelFunc
+	serverTransport mcp.ServerTransport
+	clientTransport mcp.ClientTransport
+	httpServer      *httptest.Server
+
+	mcpClient        *mcp.Client
+	clientConnectErr error
+}
+
+type testSuiteConfig struct {
+	transportName string
+
+	server        mcp.Server
+	serverOptions []mcp.ServerOption
+
+	clientOptions     []mcp.ClientOption
+	serverRequirement mcp.ServerRequirement
+}
+
+func (t *testSuite) setup() {
+	if t.cfg.transportName == "SSE" {
+		t.serverTransport, t.clientTransport, t.httpServer = setupSSE()
+	} else {
+		t.serverTransport, t.clientTransport = setupStdIO()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.cancel = cancel
+
+	go mcp.Serve(ctx, t.cfg.server, t.serverTransport, t.cfg.serverOptions...)
+
+	t.mcpClient = mcp.NewClient(mcp.Info{
+		Name:    "test-client",
+		Version: "1.0",
+	}, t.clientTransport, t.cfg.serverRequirement, t.cfg.clientOptions...)
+
+	ready := make(chan struct{})
+	errs := make(chan error)
+
+	go func() {
+		errs <- t.mcpClient.Connect(ctx, ready)
+	}()
+
+	timeout := time.After(50 * time.Millisecond)
+
+	select {
+	case <-timeout:
+	case t.clientConnectErr = <-errs:
+	}
+	<-ready
+}
+
+func (t *testSuite) teardown() {
+	t.cancel()
+	if t.cfg.transportName == "SSE" {
+		sseServer, _ := t.serverTransport.(mcp.SSEServer)
+		t.httpServer.Close()
+		sseServer.Close()
+		return
+	}
+	srvIO, _ := t.serverTransport.(mcp.StdIO)
+	cliIO, _ := t.clientTransport.(mcp.StdIO)
+	srvIO.Close()
+	cliIO.Close()
+}
+
+func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
+	return func(t *testing.T) {
+		s := &testSuite{
+			cfg: cfg,
+		}
+		s.setup()
+		defer s.teardown()
+
+		test(t, s)
+	}
+}
+
 func TestInitialize(t *testing.T) {
 	type testCase struct {
 		name              string
@@ -100,78 +181,33 @@ func TestInitialize(t *testing.T) {
 		},
 	}
 
-	var transportName string
-	for i := 0; i <= 1; i++ {
-		if i == 0 {
-			transportName = "SSE"
-		} else {
-			transportName = "StdIO"
-		}
+	for _, transportName := range []string{"SSE", "StdIO"} {
 		for _, tc := range testCases {
-			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), func(t *testing.T) {
-				// Create a new transports for each test case
-				var serverTransport mcp.ServerTransport
-				var clientTransport mcp.ClientTransport
-				if i == 0 {
-					var httpSrv *httptest.Server
-					var sseServer mcp.SSEServer
-					sseServer, clientTransport, httpSrv = setupSSE()
-					defer sseServer.Close()
-					defer httpSrv.Close()
-					serverTransport = sseServer
-				} else {
-					srvIO, cliIO := setupStdIO()
-					defer srvIO.Close()
-					defer cliIO.Close()
-					serverTransport = srvIO
-					clientTransport = cliIO
-				}
+			cfg := testSuiteConfig{
+				transportName:     transportName,
+				server:            tc.server,
+				serverOptions:     tc.serverOptions,
+				clientOptions:     tc.clientOptions,
+				serverRequirement: tc.serverRequirement,
+			}
 
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-
-				srv := tc.server
-
-				go mcp.Serve(ctx, srv, serverTransport, tc.serverOptions...)
-
-				cliInfo := mcp.Info{
-					Name:    "test-client",
-					Version: "1.0",
-				}
-				cli := mcp.NewClient(cliInfo, clientTransport, tc.serverRequirement, tc.clientOptions...)
-
-				ready := make(chan struct{})
-				errs := make(chan error)
-
-				go func() {
-					errs <- cli.Connect(ctx, ready)
-				}()
-
-				var err error
-				timeout := time.After(100 * time.Millisecond)
-
-				select {
-				case <-timeout:
-				case err = <-errs:
-				}
-				<-ready
-
+			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 				if tc.wantErr {
-					if err == nil {
+					if s.clientConnectErr == nil {
 						t.Errorf("expected error, got nil")
 					}
 					return
 				}
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
+				if s.clientConnectErr != nil {
+					t.Errorf("unexpected error: %v", s.clientConnectErr)
 					return
 				}
-			})
+			}))
 		}
 	}
 }
 
-//nolint:gocognit,gocyclo,cyclop // Avoid repetition
+//nolint:gocognit
 func TestPrimitives(t *testing.T) {
 	type testCase struct {
 		name              string
@@ -414,75 +450,40 @@ func TestPrimitives(t *testing.T) {
 
 	for _, transport := range []string{"SSE", "StdIO"} {
 		for _, tc := range testCases {
-			t.Run(fmt.Sprintf("%s/%s", transport, tc.name), func(t *testing.T) {
-				var serverTransport mcp.ServerTransport
-				var clientTransport mcp.ClientTransport
-				if transport == "SSE" {
-					var httpSrv *httptest.Server
-					var sseServer mcp.SSEServer
-					sseServer, clientTransport, httpSrv = setupSSE()
-					defer sseServer.Close()
-					defer httpSrv.Close()
-					serverTransport = sseServer
-				} else {
-					srvIO, cliIO := setupStdIO()
-					defer srvIO.Close()
-					defer cliIO.Close()
-					serverTransport = srvIO
-					clientTransport = cliIO
-				}
+			srv := &mockServer{}
+			var mockServer interface{}
+			var serverOpt mcp.ServerOption
 
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
+			switch tc.testType {
+			case "prompt":
+				mockPs := &mockPromptServer{}
+				mockServer = mockPs
+				serverOpt = mcp.WithPromptServer(mockPs)
+			case "resource":
+				mockRs := &mockResourceServer{}
+				mockServer = mockRs
+				serverOpt = mcp.WithResourceServer(mockRs)
+			case "tool":
+				mockTS := &mockToolServer{}
+				mockServer = mockTS
+				serverOpt = mcp.WithToolServer(mockTS)
+			}
 
-				srv := &mockServer{}
-				var mockServer interface{}
-				var serverOpt mcp.ServerOption
-
-				switch tc.testType {
-				case "prompt":
-					mockPs := &mockPromptServer{}
-					mockServer = mockPs
-					serverOpt = mcp.WithPromptServer(mockPs)
-				case "resource":
-					mockRs := &mockResourceServer{}
-					mockServer = mockRs
-					serverOpt = mcp.WithResourceServer(mockRs)
-				case "tool":
-					mockTS := &mockToolServer{}
-					mockServer = mockTS
-					serverOpt = mcp.WithToolServer(mockTS)
-				}
-
-				go mcp.Serve(ctx, srv, serverTransport, serverOpt)
-
-				cli := mcp.NewClient(mcp.Info{
-					Name:    "test-client",
-					Version: "1.0",
-				}, clientTransport, tc.serverRequirement)
-
-				ready := make(chan struct{})
-				errs := make(chan error)
-
-				go func() {
-					errs <- cli.Connect(ctx, ready)
-				}()
-
-				var err error
-				timeout := time.After(100 * time.Millisecond)
-
-				select {
-				case <-timeout:
-				case err = <-errs:
-				}
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
+			cfg := testSuiteConfig{
+				transportName:     transport,
+				server:            srv,
+				serverOptions:     []mcp.ServerOption{serverOpt},
+				clientOptions:     []mcp.ClientOption{},
+				serverRequirement: tc.serverRequirement,
+			}
+			t.Run(fmt.Sprintf("%s/%s", transport, tc.name), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+				if s.clientConnectErr != nil {
+					t.Errorf("unexpected error: %v", s.clientConnectErr)
 					return
 				}
-				<-ready
 
-				tc.testFunc(t, cli, mockServer)
-			})
+				tc.testFunc(t, s.mcpClient, mockServer)
+			}))
 		}
 	}
 }
