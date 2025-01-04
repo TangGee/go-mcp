@@ -687,6 +687,10 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 
 func (c *Client) start(ctx context.Context) {
 	pingTicker := time.NewTicker(c.pingInterval)
+
+	// We maintain two maps for handling request/response correlation and cancellation:
+	// - waitForResults: tracks pending requests awaiting responses
+	// - cancels: stores cancellation functions for active requests
 	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
 	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
 
@@ -765,15 +769,17 @@ func (c *Client) listenMessages(
 			continue
 		}
 
+		// We handle different message types through a switch statement.
+		// Each notification type is processed asynchronously to prevent blocking
 		switch msg.Method {
 		case methodPing:
 			if err := c.sendResult(ctx, msg.ID, nil); err != nil {
 				c.logger.Error("failed to handle ping", "err", err)
 			}
 		case MethodRootsList:
-			go c.handleListRoots(ctx, msg)
+			go c.handleListRoots(ctx, msg) // Async handling of roots list requests
 		case MethodSamplingCreateMessage:
-			go c.handleSamplingMessages(ctx, msg)
+			go c.handleSamplingMessages(ctx, msg) // Async handling of sampling messages
 		case methodNotificationsPromptsListChanged:
 			if c.promptListWatcher != nil {
 				c.promptListWatcher.OnPromptListChanged()
@@ -931,6 +937,9 @@ func (c *Client) handleSamplingMessages(ctx context.Context, msg JSONRPCMessage)
 }
 
 func (c *Client) checkCapabilities(result initializeResult, requiredServerCap ServerCapabilities) error {
+	// We perform hierarchical capability checking:
+	// 1. Check if the main capability exists
+	// 2. Check if required sub-capabilities are supported
 	if requiredServerCap.Prompts != nil {
 		if result.Capabilities.Prompts == nil {
 			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'prompts'")
@@ -997,6 +1006,7 @@ func (c *Client) sendRequest(ctx context.Context, msg JSONRPCMessage) (JSONRPCMe
 	msgID := uuid.New().String()
 	msg.ID = MustString(msgID)
 
+	// We create a channel to receive the response channel, allowing for async request handling
 	resChannels := make(chan chan JSONRPCMessage)
 	wfrReq := waitForResultReq{
 		msgID:   msgID,

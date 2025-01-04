@@ -31,7 +31,9 @@ type stdIOSession struct {
 	writer io.WriteCloser
 	logger *slog.Logger
 
-	done   chan struct{}
+	// done signals session termination to all goroutines
+	done chan struct{}
+	// closed is used to ensure proper cleanup sequencing
 	closed chan struct{}
 }
 
@@ -89,10 +91,13 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
+	// We append newline to maintain message framing protocol
 	msgBs = append(msgBs, '\n')
 
 	errs := make(chan error, 1)
 
+	// We use a goroutine for writing to prevent blocking on slow writers
+	// while still respecting context cancellation
 	go func() {
 		_, err = s.writer.Write(msgBs)
 		if err != nil {
@@ -102,6 +107,7 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 		errs <- nil
 	}()
 
+	// We prioritize context cancellation and session termination over write completion
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -118,6 +124,7 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 
 		scanner := bufio.NewScanner(s.reader)
 		for scanner.Scan() {
+			// We check for session termination between each message
 			select {
 			case <-s.done:
 				return
@@ -136,10 +143,12 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 				continue
 			}
 
+			// We stop iteration if yield returns false
 			if !yield(msg) {
 				return
 			}
 		}
+		// We ignore ErrClosedPipe as it's an expected error during shutdown
 		if scanner.Err() != nil && !errors.Is(scanner.Err(), io.ErrClosedPipe) {
 			s.logger.Error("scan error", "err", scanner.Err())
 		}
@@ -154,6 +163,7 @@ func (s stdIOSession) close() {
 		s.logger.Error("failed to close writer", "err", err)
 	}
 
+	// We signal termination and wait for Messages goroutine to complete
 	close(s.done)
 	<-s.closed
 }

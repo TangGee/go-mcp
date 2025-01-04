@@ -270,17 +270,22 @@ func (s *SSEClient) StartSession(ctx context.Context, ready chan<- error) (iter.
 func (s SSEServer) listen() {
 	defer close(s.closed)
 
+	// Track all active sessions in a map for O(1) lookup and removal
 	sessions := make(map[string]sseServerSession)
 
 	for {
 		select {
 		case <-s.done:
+			// We close the sessions channel first to prevent new iterations
+			// before cleaning up existing sessions
 			close(s.sessions)
 			for _, sess := range sessions {
 				sess.close()
 			}
 			return
 		case sess := <-s.addSessions:
+			// We start the session handler goroutine before adding it to the map
+			// to ensure message processing begins immediately
 			go sess.start()
 			sessions[sess.id] = sess
 			s.sessions <- sess
@@ -289,6 +294,8 @@ func (s SSEServer) listen() {
 			if !ok {
 				continue
 			}
+			// We close the session before removing it from the map to ensure
+			// proper cleanup of resources
 			sess.close()
 			delete(sessions, removal.sessID)
 			removal.done <- struct{}{}
@@ -312,6 +319,8 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 
 		switch ev.Type {
 		case "endpoint":
+			// We must receive and validate the endpoint URL before processing any messages
+			// to ensure proper message routing
 			u, err := url.Parse(ev.Data)
 			if err != nil {
 				ready <- fmt.Errorf("parse endpoint URL: %w", err)
@@ -324,6 +333,8 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 			s.messageURL = u.String()
 			close(ready)
 		case "message":
+			// We enforce the requirement that an endpoint URL must be received
+			// before processing any messages
 			if s.messageURL == "" {
 				s.logger.Error("received message before endpoint URL")
 				continue
@@ -416,6 +427,10 @@ func (s sseServerSession) start() {
 }
 
 func (s sseServerSession) close() {
+	// We use a specific order for channel closure to prevent deadlocks:
+	// 1. Signal termination via done channel
+	// 2. Close message receiving
+	// 3. Wait for send/receive goroutines to finish
 	close(s.done)
 	close(s.receivedMsgs)
 

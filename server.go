@@ -260,6 +260,7 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 }
 
 func (s server) listenSessions() {
+	// We maintain a continuous loop to handle new client sessions and their lifecycle
 	for sess := range s.transport.Sessions() {
 		select {
 		case <-s.done:
@@ -268,11 +269,14 @@ func (s server) listenSessions() {
 		}
 
 		done := make(chan struct{})
+		// We spawn a goroutine to handle messages for this session
 		go func() {
 			s.listenMessages(sess.ID(), sess.Messages())
 			close(done)
 		}()
 
+		// We spawn a separate goroutine for session management and ping handling
+		// This ensures each session maintains its own heartbeat independently
 		go func(sessID string) {
 			pingTicker := time.NewTicker(s.pingInterval)
 
@@ -291,10 +295,15 @@ func (s server) listenSessions() {
 }
 
 func (s server) start(ctx context.Context) {
+	// We maintain three core maps for session state management:
+	// - sessions: tracks active client sessions
+	// - waitForResults: correlates message IDs with their response channels
+	// - cancels: stores cancellation functions for ongoing operations
 	sessions := make(map[string]Session)                   // map[sessionID]context
 	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
 	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
 
+	// Main event loop for handling various server operations
 	for {
 		select {
 		case <-ctx.Done():
@@ -432,11 +441,14 @@ func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
 
 func (s server) listenMessages(sessID string, msgs iter.Seq[JSONRPCMessage]) {
 	for msg := range msgs {
+		// We validate JSON-RPC version before processing any message
 		if msg.JSONRPC != JSONRPCVersion {
 			s.logger.Error("failed to handle message", "err", errInvalidJSON)
 			continue
 		}
 
+		// We use a switch statement to route messages to appropriate handlers
+		// Each handler runs in its own goroutine to prevent blocking
 		switch msg.Method {
 		case methodPing:
 			go s.sendResult(sessID, msg.ID, nil)
@@ -918,10 +930,14 @@ func (s server) progressReporter(sessID string, msgID MustString) func(ProgressP
 }
 
 func (s server) clientRequester(sessID string) func(msg JSONRPCMessage) (JSONRPCMessage, error) {
+	// We return a closure that handles the complexity of making client requests
+	// This includes message correlation and timeout management
 	return func(msg JSONRPCMessage) (JSONRPCMessage, error) {
+		// We generate a unique ID for request-response correlation
 		msgID := uuid.New().String()
 		msg.ID = MustString(msgID)
 
+		// We set up channels for handling the response asynchronously
 		resChanChan := make(chan chan JSONRPCMessage)
 		wfrReq := waitForResultReq{
 			msgID:   msgID,

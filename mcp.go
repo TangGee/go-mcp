@@ -20,14 +20,11 @@ type ServerTransport interface {
 
 // ClientTransport provides the client-side communication layer in the MCP protocol.
 type ClientTransport interface {
-	// StartSession initiates a new session with the server and returns an iterator
-	// that yields server messages. The ready channel is used to signal when the transport
-	// is ready to send messages.
-	//
-	// The implementation must ensure StartSession is called only once and must close or feed
-	// the ready channel when prepared to send messages. Operations should be canceled if the
-	// context is canceled, and appropriate errors should be returned for connection or protocol
-	// failures.
+	// StartSession initiates a new session with the server and returns an iterator that yields server messages.
+	// The transport signals its readiness to send messages through the ready channel by either closing it or
+	// feeding an error. Operations are canceled when the context is canceled, and appropriate errors are returned
+	// for connection or protocol failures. Refer to the returned iterator's documentation for details on message
+	// handling.
 	StartSession(ctx context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error)
 
 	// Send transmits a message to the server. The implementation must only allow sending
@@ -77,18 +74,12 @@ type PromptServer interface {
 }
 
 // PromptListUpdater provides an interface for monitoring changes to the available prompts list.
-// It maintains a channel that emits notifications whenever prompts are added, removed, or modified.
 //
 // The notifications are used by the MCP server to inform connected clients about prompt list
 // changes via the "notifications/prompts/list_changed" method. Clients can then refresh their
 // cached prompt lists by calling ListPrompts again.
 //
-// The channel returned by PromptListUpdates must:
-// - Remain open for the lifetime of the updater
-// - Be safe for concurrent receives from multiple goroutines
-// - Never block on sends using buffered channels or dropped notifications
-//
-// A struct{} is sent through the channel as only the notification matters, not the value.
+// A struct{} is sent through the iterator as only the notification matters, not the value.
 type PromptListUpdater interface {
 	PromptListUpdates() iter.Seq[struct{}]
 }
@@ -123,35 +114,20 @@ type ResourceServer interface {
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
-// It maintains a channel that emits notifications whenever resources are added, removed, or modified.
 //
 // The notifications are used by the MCP server to inform connected clients about resource list
 // changes. Clients can then refresh their cached resource lists by calling ListResources again.
-//
-// The channel returned by ResourceListUpdates must:
-// - Remain open for the lifetime of the updater
-// - Be safe for concurrent receives from multiple goroutines
-// - Never block on sends using buffered channels or dropped notifications
 //
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type ResourceListUpdater interface {
 	ResourceListUpdates() iter.Seq[struct{}]
 }
 
-// ResourceSubscribedUpdater provides an interface for monitoring changes to subscribed resources.
-// It maintains a channel that emits notifications whenever a subscribed resource changes.
-//
-// The notifications are used by the MCP server to inform connected clients about changes to
-// resources they have subscribed to. The channel emits the URI of the changed resource.
-//
-// The channel returned by ResourceSubscribedUpdates must:
-// - Remain open for the lifetime of the updater
-// - Be safe for concurrent receives from multiple goroutines
-// - Never block on sends using buffered channels or dropped notifications
-//
-// A string (resource URI) is sent through the channel to identify which resource changed.
+// ResourceSubscriptionHandler defines the interface for handling subscription for resources.
 type ResourceSubscriptionHandler interface {
+	// SubscribeResource subscribes to a resource.
 	SubscribeResource(SubscribeResourceParams)
+	// SubscribedResourceUpdates returns an iterator that emits notifications whenever a subscribed resource changes.
 	SubscribedResourceUpdates() iter.Seq[string]
 }
 
@@ -171,15 +147,9 @@ type ToolServer interface {
 }
 
 // ToolListUpdater provides an interface for monitoring changes to the available tools list.
-// It maintains a channel that emits notifications whenever tools are added, removed, or modified.
 //
 // The notifications are used by the MCP server to inform connected clients about tool list
 // changes. Clients can then refresh their cached tool lists by calling ListTools again.
-//
-// The channel returned by ToolListUpdates must:
-// - Remain open for the lifetime of the updater
-// - Be safe for concurrent receives from multiple goroutines
-// - Never block on sends using buffered channels or dropped notifications
 //
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type ToolListUpdater interface {
@@ -187,10 +157,8 @@ type ToolListUpdater interface {
 }
 
 // LogHandler provides an interface for streaming log messages from the MCP server to connected clients.
-// It maintains a channel for emitting log messages and allows configuration of minimum severity level.
 type LogHandler interface {
-	// LogStreams returns a channel that emits log messages with metadata.
-	// The channel remains open for the lifetime of the handler and is safe for concurrent receives.
+	// LogStreams returns an iterator that emits log messages with metadata.
 	LogStreams() iter.Seq[LogParams]
 
 	// SetLogLevel configures the minimum severity level for emitted log messages.
@@ -220,8 +188,7 @@ type RootsListHandler interface {
 // Implementations should maintain a channel that emits notifications whenever the list of
 // available roots changes, such as when roots are added, removed, or modified.
 type RootsListUpdater interface {
-	// RootsListUpdates returns a channel that emits notifications when the root list changes.
-	// The returned channel remains open for the lifetime of the updater and is safe for concurrent use.
+	// RootsListUpdates returns an iterator that emits notifications when the root list changes.
 	RootsListUpdates() iter.Seq[struct{}]
 }
 
@@ -257,9 +224,6 @@ type ResourceListWatcher interface {
 // specific resources they are interested in are modified.
 type ResourceSubscribedWatcher interface {
 	// OnResourceSubscribedChanged is called when the server notifies that a subscribed resource has changed.
-	//
-	// Parameters:
-	// - uri: The unique identifier of the resource that changed
 	OnResourceSubscribedChanged(uri string)
 }
 
