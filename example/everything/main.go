@@ -14,7 +14,8 @@ import (
 var port = "8080"
 
 func main() {
-	sse := mcp.NewSSEServer()
+	msgURL := fmt.Sprintf("%s/message", baseURL())
+	sse := mcp.NewSSEServer(msgURL)
 	server := everything.NewServer()
 
 	srv := &http.Server{
@@ -22,8 +23,7 @@ func main() {
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 
-	msgBaseURL := fmt.Sprintf("%s/message", baseURL())
-	http.Handle("/sse", sse.HandleSSE(msgBaseURL))
+	http.Handle("/sse", sse.HandleSSE())
 	http.Handle("/message", sse.HandleMessage())
 
 	go func() {
@@ -33,16 +33,14 @@ func main() {
 		}
 	}()
 
-	errsChan := make(chan error)
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 
-	go mcp.Serve(srvCtx, server, sse, errsChan,
+	go mcp.Serve(srvCtx, server, sse,
 		mcp.WithServerPingInterval(30*time.Second),
 		mcp.WithPromptServer(server),
 		mcp.WithResourceServer(server),
 		mcp.WithToolServer(server),
-		mcp.WithResourceSubscribedUpdater(server),
-		mcp.WithProgressReporter(server),
+		mcp.WithResourceSubscriptionHandler(server),
 		mcp.WithLogHandler(server),
 	)
 
@@ -51,10 +49,7 @@ func main() {
 	fmt.Println("Server started")
 
 	cli := newClient()
-	go func() {
-		cli.run()
-		cli.cli.Close()
-	}()
+	go cli.run()
 
 	<-cli.done
 

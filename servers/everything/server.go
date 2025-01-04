@@ -18,11 +18,12 @@ type Server struct {
 
 	logLevel mcp.LogLevel
 
-	updateResourceSubsChan chan string
-	progressChan           chan mcp.ProgressParams
-	logChan                chan mcp.LogParams
+	updateResourceSubs chan string
+	logs               chan mcp.LogParams
 
-	doneChan chan struct{}
+	done               chan struct{}
+	logClosed          chan struct{}
+	resourceSubsClosed chan struct{}
 }
 
 // NewServer creates a new test server that implements all MCP protocol features. It initializes
@@ -36,12 +37,13 @@ type Server struct {
 // resources.
 func NewServer() *Server {
 	s := &Server{
-		resourceSubscribers:    new(sync.Map),
-		logLevel:               mcp.LogLevelDebug,
-		updateResourceSubsChan: make(chan string),
-		progressChan:           make(chan mcp.ProgressParams, 10),
-		logChan:                make(chan mcp.LogParams, 10),
-		doneChan:               make(chan struct{}),
+		resourceSubscribers: new(sync.Map),
+		logLevel:            mcp.LogLevelDebug,
+		updateResourceSubs:  make(chan string),
+		logs:                make(chan mcp.LogParams, 10),
+		done:                make(chan struct{}),
+		logClosed:           make(chan struct{}),
+		resourceSubsClosed:  make(chan struct{}),
 	}
 
 	go s.simulateResourceUpdates()
@@ -69,5 +71,7 @@ func (s Server) RequireSamplingClient() bool {
 
 // Close closes the SSEServer and stops all background tasks.
 func (s Server) Close() {
-	close(s.doneChan)
+	close(s.done)
+	<-s.logClosed
+	<-s.resourceSubsClosed
 }

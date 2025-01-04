@@ -76,7 +76,12 @@ var toolList = []mcp.Tool{
 }
 
 // ListTools implements mcp.ToolServer interface.
-func (s *Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ListToolsResult, error) {
+func (s *Server) ListTools(
+	context.Context,
+	mcp.ListToolsParams,
+	mcp.ProgressReporter,
+	mcp.RequestClientFunc,
+) (mcp.ListToolsResult, error) {
 	s.log("ListTools", mcp.LogLevelDebug)
 
 	return mcp.ListToolsResult{
@@ -88,6 +93,7 @@ func (s *Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClie
 func (s *Server) CallTool(
 	ctx context.Context,
 	params mcp.CallToolParams,
+	progressReporter mcp.ProgressReporter,
 	requestClient mcp.RequestClientFunc,
 ) (mcp.CallToolResult, error) {
 	s.log(fmt.Sprintf("CallTool: %s", params.Name), mcp.LogLevelDebug)
@@ -98,7 +104,7 @@ func (s *Server) CallTool(
 	case "add":
 		return s.callAdd(ctx, params)
 	case "longRunningOperation":
-		return s.callLongRunningOperation(ctx, params)
+		return s.callLongRunningOperation(ctx, params, progressReporter)
 	case "printEnv":
 		return s.callPrintEnv(ctx, params)
 	case "sampleLLM":
@@ -161,7 +167,11 @@ func (s *Server) callAdd(ctx context.Context, params mcp.CallToolParams) (mcp.Ca
 	}, nil
 }
 
-func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func (s *Server) callLongRunningOperation(
+	ctx context.Context,
+	params mcp.CallToolParams,
+	progressReporter mcp.ProgressReporter,
+) (mcp.CallToolResult, error) {
 	vs := longRunningOperationSchema.Validate(ctx, params.Arguments)
 	errs := *vs.Errs
 	if len(errs) > 0 {
@@ -183,17 +193,11 @@ func (s *Server) callLongRunningOperation(ctx context.Context, params mcp.CallTo
 			continue
 		}
 
-		select {
-		case s.progressChan <- mcp.ProgressParams{
+		progressReporter(mcp.ProgressParams{
 			ProgressToken: params.Meta.ProgressToken,
 			Progress:      float64(i + 1),
 			Total:         steps,
-		}:
-		case <-ctx.Done():
-			return mcp.CallToolResult{}, ctx.Err()
-		case <-s.doneChan:
-			return mcp.CallToolResult{}, fmt.Errorf("server closed")
-		}
+		})
 	}
 
 	return mcp.CallToolResult{

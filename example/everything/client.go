@@ -92,13 +92,19 @@ func (c *client) OnLog(params mcp.LogParams) {
 
 func (c *client) run() {
 	defer c.stop()
-	go c.listenInterruptSignal()
+
+	ready := make(chan struct{})
 
 	fmt.Println("Connecting to server...")
-	if err := c.cli.Connect(); err != nil {
-		fmt.Printf("failed to connect to server: %v\n", err)
-		return
-	}
+	go func() {
+		if err := c.cli.Connect(c.ctx, ready); err != nil {
+			fmt.Printf("failed to connect to server: %v\n", err)
+			return
+		}
+	}()
+	go c.listenInterruptSignal()
+	<-ready
+
 	fmt.Printf("Connected to server")
 
 	for {
@@ -338,7 +344,6 @@ func (c *client) runResources() bool {
 		fmt.Println("Enter one of the following commands:")
 		fmt.Println("- read <resourceURI>: Read the content of the resource")
 		fmt.Println("- subscribe <resourceURI>: Subscribe to updates for the resource (nop if already subscribed)")
-		fmt.Println("- unsubscribe <resourceURI>: Unsubscribe from updates for the resource (nop if not subscribed)")
 		fmt.Println("- next: Go to the next page (return to first page if already at the last page)")
 		fmt.Println("- exit: Go back to the main menu")
 
@@ -382,15 +387,6 @@ func (c *client) runResources() bool {
 				fmt.Printf("Failed to subscribe to resource: %v\n", err)
 			}
 			fmt.Printf("Subscribed to resource %s, check Notifications for updates\n", resource.URI)
-			return false
-		}
-		if inputArr[0] == "unsubscribe" {
-			if err := c.cli.UnsubscribeResource(c.ctx, mcp.UnsubscribeResourceParams{
-				URI: resource.URI,
-			}); err != nil {
-				fmt.Printf("Failed to unsubscribe from resource: %v\n", err)
-			}
-			fmt.Printf("Unsubscribed from resource %s\n", resource.URI)
 			return false
 		}
 

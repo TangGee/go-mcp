@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"iter"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ func genResources() []mcp.Resource {
 func (s *Server) ListResources(
 	_ context.Context,
 	params mcp.ListResourcesParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListResourcesResult, error) {
 	s.log(fmt.Sprintf("ListResources: %s", params.Cursor), mcp.LogLevelDebug)
@@ -77,6 +79,7 @@ func (s *Server) ListResources(
 func (s *Server) ReadResource(
 	_ context.Context,
 	params mcp.ReadResourceParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ReadResourceResult, error) {
 	s.log(fmt.Sprintf("ReadResource: %s", params.URI), mcp.LogLevelDebug)
@@ -104,6 +107,7 @@ func (s *Server) ReadResource(
 func (s *Server) ListResourceTemplates(
 	_ context.Context,
 	_ mcp.ListResourceTemplatesParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListResourceTemplatesResult, error) {
 	s.log("ListResourceTemplates", mcp.LogLevelDebug)
@@ -150,30 +154,36 @@ func (s *Server) CompletesResourceTemplate(
 	}, nil
 }
 
-// SubscribeResource implements mcp.ResourceServer interface.
+// SubscribeResource implements mcp.ResourceSubscriptionHandler interface.
 func (s *Server) SubscribeResource(params mcp.SubscribeResourceParams) {
 	s.log(fmt.Sprintf("SubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Store(params.URI, struct{}{})
 }
 
-// UnsubscribeResource implements mcp.ResourceServer interface.
-func (s *Server) UnsubscribeResource(params mcp.UnsubscribeResourceParams) {
-	s.log(fmt.Sprintf("UnsubscribeResource: %s", params.URI), mcp.LogLevelDebug)
-
-	s.resourceSubscribers.Delete(params.URI)
-}
-
-// ResourceSubscribedUpdates implements mcp.ResourceSubscribedUpdater interface.
-func (s *Server) ResourceSubscribedUpdates() <-chan string {
-	return s.updateResourceSubsChan
+// SubscribedResourceUpdates implements mcp.ResourceSubscriptionHandler interface.
+func (s *Server) SubscribedResourceUpdates() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for {
+			select {
+			case <-s.done:
+				return
+			case uri := <-s.updateResourceSubs:
+				if !yield(uri) {
+					return
+				}
+			}
+		}
+	}
 }
 
 func (s *Server) simulateResourceUpdates() {
+	defer close(s.resourceSubsClosed)
+
 	ticker := time.NewTicker(30 * time.Second)
 	for {
 		select {
-		case <-s.doneChan:
+		case <-s.done:
 			return
 		case <-ticker.C:
 		}
@@ -184,8 +194,8 @@ func (s *Server) simulateResourceUpdates() {
 			s.log(fmt.Sprintf("simulateResourceUpdates: Resource %s updated", uri), mcp.LogLevelDebug)
 
 			select {
-			case s.updateResourceSubsChan <- uri:
-			case <-s.doneChan:
+			case s.updateResourceSubs <- uri:
+			case <-s.done:
 				return false
 			}
 

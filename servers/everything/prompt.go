@@ -48,6 +48,7 @@ var promptCompletions = map[string][]string{
 func (s *Server) ListPrompts(
 	context.Context,
 	mcp.ListPromptsParams,
+	mcp.ProgressReporter,
 	mcp.RequestClientFunc,
 ) (mcp.ListPromptResult, error) {
 	s.log("ListPrompts", mcp.LogLevelDebug)
@@ -61,6 +62,7 @@ func (s *Server) ListPrompts(
 func (s *Server) GetPrompt(
 	_ context.Context,
 	params mcp.GetPromptParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.GetPromptResult, error) {
 	s.log(fmt.Sprintf("GetPrompt: %s", params.Name), mcp.LogLevelDebug)
