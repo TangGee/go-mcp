@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.3.0] - 2025-01-05
+
+This release introduces significant improvements in API consistency and modernizes the codebase by adopting Go 1.23's iterator pattern. Key changes include restructured parameter naming conventions, simplified package organization, enhanced transport interfaces, and improved SSE handling through the integration of `go-sse` library. The adoption of iterators for handling sessions, messages, and streaming operations provides a more efficient and safer alternative to channels for sequential data processing.
 
 ### Added
 
