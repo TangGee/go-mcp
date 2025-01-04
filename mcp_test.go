@@ -75,7 +75,7 @@ func TestInitialize(t *testing.T) {
 				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
 			},
 			clientOptions: []mcp.ClientOption{
-				mcp.WithPromptListWatcher(mockPromptListWatcher{}),
+				mcp.WithPromptListWatcher(&mockPromptListWatcher{}),
 				mcp.WithResourceListWatcher(mockResourceListWatcher{}),
 				mcp.WithResourceSubscribedWatcher(mockResourceSubscribedWatcher{}),
 				mcp.WithToolListWatcher(mockToolListWatcher{}),
@@ -148,6 +148,103 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
+func TestPrompt(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		promptServer := mockPromptServer{}
+		progressListener := mockProgressListener{}
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			server:        &mockServer{},
+			serverOptions: []mcp.ServerOption{
+				mcp.WithPromptServer(&promptServer),
+			},
+			clientOptions: []mcp.ClientOption{
+				mcp.WithProgressListener(&progressListener),
+			},
+			serverRequirement: mcp.ServerRequirement{
+				PromptServer: true,
+			},
+		}
+
+		t.Run(fmt.Sprintf("%s/ListPrompts", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListPrompts(context.Background(), mcp.ListPromptsParams{
+				Cursor: "cursor",
+				Meta: mcp.ParamsMeta{
+					ProgressToken: "progressToken",
+				},
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if promptServer.listParams.Cursor != "cursor" {
+				t.Errorf("expected cursor cursor, got %s", promptServer.listParams.Cursor)
+			}
+			if len(progressListener.params) != 10 {
+				t.Errorf("expected 10 progress params, got %d", len(progressListener.params))
+				return
+			}
+			for i := 0; i < 10; i++ {
+				if progressListener.params[i].ProgressToken != "progressToken" {
+					t.Errorf("expected progressToken progressToken, got %s", progressListener.params[i].ProgressToken)
+				}
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/GetPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.GetPrompt(context.Background(), mcp.GetPromptParams{
+				Name: "test-prompt",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if promptServer.getParams.Name != "test-prompt" {
+				t.Errorf("expected prompt name test-prompt, got %s", promptServer.getParams.Name)
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/CompletesPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
+				Ref: mcp.CompletionRef{
+					Type: mcp.CompletionRefPrompt,
+					Name: "test-prompt",
+				},
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if promptServer.completesParams.Ref.Name != "test-prompt" {
+				t.Errorf("expected prompt name test-prompt, got %s", promptServer.completesParams.Ref.Name)
+			}
+		}))
+
+		promptListUpdater := mockPromptListUpdater{
+			ch: make(chan struct{}),
+		}
+		promptListWatcher := mockPromptListWatcher{}
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithPromptListUpdater(promptListUpdater))
+		cfg.clientOptions = append(cfg.clientOptions, mcp.WithPromptListWatcher(&promptListWatcher))
+
+		t.Run(fmt.Sprintf("%s/UpdatePromptList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			for i := 0; i < 5; i++ {
+				promptListUpdater.ch <- struct{}{}
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			promptListWatcher.lock.Lock()
+			defer promptListWatcher.lock.Unlock()
+			if promptListWatcher.updateCount != 5 {
+				t.Errorf("expected 10 prompt list updates, got %d", promptListWatcher.updateCount)
+			}
+		}))
+	}
+}
+
 func TestLog(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		handler := mockLogHandler{
@@ -203,7 +300,6 @@ func TestLog(t *testing.T) {
 	}
 }
 
-//nolint:gocognit
 func TestClientRequest(t *testing.T) {
 	type testCase struct {
 		name              string
@@ -214,69 +310,6 @@ func TestClientRequest(t *testing.T) {
 	}
 
 	testCases := []testCase{
-		{
-			name:     "ListPrompts",
-			testType: "prompt",
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockPs, _ := srv.(*mockPromptServer)
-				_, err := cli.ListPrompts(context.Background(), mcp.ListPromptsParams{
-					Cursor: "cursor",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockPs.listParams.Cursor != "cursor" {
-					t.Errorf("expected cursor cursor, got %s", mockPs.listParams.Cursor)
-				}
-			},
-		},
-		{
-			name:     "GetPrompt",
-			testType: "prompt",
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockPs, _ := srv.(*mockPromptServer)
-				_, err := cli.GetPrompt(context.Background(), mcp.GetPromptParams{
-					Name: "test-prompt",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockPs.getParams.Name != "test-prompt" {
-					t.Errorf("expected prompt name test-prompt, got %s", mockPs.getParams.Name)
-				}
-			},
-		},
-		{
-			name:     "CompletesPrompt",
-			testType: "prompt",
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockPs, _ := srv.(*mockPromptServer)
-				_, err := cli.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
-					Ref: mcp.CompletionRef{
-						Type: mcp.CompletionRefPrompt,
-						Name: "test-prompt",
-					},
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockPs.completesParams.Ref.Name != "test-prompt" {
-					t.Errorf("expected prompt name test-prompt, got %s", mockPs.completesParams.Ref.Name)
-				}
-			},
-		},
 		{
 			name:     "ListResources",
 			testType: "resource",

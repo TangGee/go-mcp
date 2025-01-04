@@ -90,7 +90,7 @@ type PromptServer interface {
 //
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type PromptListUpdater interface {
-	PromptListUpdates() <-chan struct{}
+	PromptListUpdates() iter.Seq[struct{}]
 }
 
 // ResourceServer defines the interface for managing resources in the MCP protocol.

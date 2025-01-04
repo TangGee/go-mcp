@@ -7,7 +7,10 @@ import (
 	"github.com/MegaGrindStone/go-mcp"
 )
 
-type mockPromptListWatcher struct{}
+type mockPromptListWatcher struct {
+	lock        sync.Mutex
+	updateCount int
+}
 
 type mockResourceListWatcher struct{}
 
@@ -23,12 +26,19 @@ type mockRootsListUpdater struct {
 
 type mockSamplingHandler struct{}
 
+type mockProgressListener struct {
+	params []mcp.ProgressParams
+}
+
 type mockLogReceiver struct {
 	lock   sync.Mutex
 	params []mcp.LogParams
 }
 
-func (m mockPromptListWatcher) OnPromptListChanged() {
+func (m *mockPromptListWatcher) OnPromptListChanged() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.updateCount++
 }
 
 func (m mockResourceListWatcher) OnResourceListChanged() {
@@ -70,5 +80,9 @@ func (m mockSamplingHandler) CreateSampleMessage(context.Context, mcp.SamplingPa
 func (m *mockLogReceiver) OnLog(params mcp.LogParams) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
+	m.params = append(m.params, params)
+}
+
+func (m *mockProgressListener) OnProgress(params mcp.ProgressParams) {
 	m.params = append(m.params, params)
 }

@@ -19,7 +19,9 @@ type mockPromptServer struct {
 	completesParams mcp.CompletesCompletionParams
 }
 
-type mockPromptListUpdater struct{}
+type mockPromptListUpdater struct {
+	ch chan struct{}
+}
 
 type mockResourceServer struct {
 	listParams              mcp.ListResourcesParams
@@ -64,9 +66,16 @@ func (m mockServer) RequireSamplingClient() bool {
 func (m *mockPromptServer) ListPrompts(
 	_ context.Context,
 	params mcp.ListPromptsParams,
-	_ mcp.ProgressReporter,
+	progressReporter mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListPromptResult, error) {
+	for i := 0; i < 10; i++ {
+		progressReporter(mcp.ProgressParams{
+			ProgressToken: params.Meta.ProgressToken,
+			Progress:      float64(i) / 10,
+			Total:         10,
+		})
+	}
 	m.listParams = params
 	return mcp.ListPromptResult{}, nil
 }
@@ -90,8 +99,14 @@ func (m *mockPromptServer) CompletesPrompt(
 	return mcp.CompletionResult{}, nil
 }
 
-func (m mockPromptListUpdater) PromptListUpdates() <-chan struct{} {
-	return nil
+func (m mockPromptListUpdater) PromptListUpdates() iter.Seq[struct{}] {
+	return func(yield func(struct{}) bool) {
+		for range m.ch {
+			if !yield(struct{}{}) {
+				return
+			}
+		}
+	}
 }
 
 func (m *mockResourceServer) ListResources(

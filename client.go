@@ -802,8 +802,8 @@ func (c *Client) listenMessages(
 		case MethodSamplingCreateMessage:
 			go c.handleSamplingMessages(ctx, msg)
 		case methodNotificationsPromptsListChanged:
-			if c.resourceListWatcher != nil {
-				c.resourceListWatcher.OnResourceListChanged()
+			if c.promptListWatcher != nil {
+				c.promptListWatcher.OnPromptListChanged()
 			}
 		case methodNotificationsResourcesListChanged:
 			if c.resourceListWatcher != nil {

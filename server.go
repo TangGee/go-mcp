@@ -80,6 +80,9 @@ var (
 // a graceful shutdown by closing all active sessions and cleaning up resources.
 func Serve(ctx context.Context, server Server, transport ServerTransport, options ...ServerOption) {
 	s := newServer(server, transport, options...)
+	if s.promptListUpdater != nil {
+		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates())
+	}
 	if s.logHandler != nil {
 		go s.listenLogs()
 	}
@@ -382,12 +385,21 @@ func (s server) listenLogs() {
 	}
 }
 
-func (s server) listenNotifications() {
-	var plUpdates <-chan struct{}
-	if s.promptListUpdater != nil {
-		plUpdates = s.promptListUpdater.PromptListUpdates()
+func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
+	for range updates {
+		msg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
+			Method:  method,
+		}
+		select {
+		case <-s.done:
+			return
+		case s.broadcasts <- msg:
+		}
 	}
+}
 
+func (s server) listenNotifications() {
 	var rlUpdates <-chan struct{}
 	if s.resourceListUpdater != nil {
 		rlUpdates = s.resourceListUpdater.ResourceListUpdates()
@@ -409,11 +421,6 @@ func (s server) listenNotifications() {
 		select {
 		case <-s.done:
 			return
-		case <-plUpdates:
-			msg = JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				Method:  methodNotificationsPromptsListChanged,
-			}
 		case <-rlUpdates:
 			msg = JSONRPCMessage{
 				JSONRPC: JSONRPCVersion,
