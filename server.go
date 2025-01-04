@@ -89,10 +89,12 @@ func Serve(ctx context.Context, server Server, transport ServerTransport, option
 	if s.resourceSubscriptionHandler != nil {
 		go s.listenSubcribedResources()
 	}
+	if s.toolListUpdater != nil {
+		go s.listenUpdates(methodNotificationsToolsListChanged, s.toolListUpdater.ToolListUpdates())
+	}
 	if s.logHandler != nil {
 		go s.listenLogs()
 	}
-	go s.listenNotifications()
 	go s.listenSessions()
 	s.start(ctx)
 }
@@ -420,33 +422,6 @@ func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
 			JSONRPC: JSONRPCVersion,
 			Method:  method,
 		}
-		select {
-		case <-s.done:
-			return
-		case s.broadcasts <- msg:
-		}
-	}
-}
-
-func (s server) listenNotifications() {
-	var tlUpdates <-chan struct{}
-	if s.toolListUpdater != nil {
-		tlUpdates = s.toolListUpdater.ToolListUpdates()
-	}
-
-	var msg JSONRPCMessage
-
-	for {
-		select {
-		case <-s.done:
-			return
-		case <-tlUpdates:
-			msg = JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				Method:  methodNotificationsToolsListChanged,
-			}
-		}
-
 		select {
 		case <-s.done:
 			return

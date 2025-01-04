@@ -46,7 +46,9 @@ type mockToolServer struct {
 	callParams mcp.CallToolParams
 }
 
-type mockToolListUpdater struct{}
+type mockToolListUpdater struct {
+	ch chan struct{}
+}
 
 type mockLogHandler struct {
 	lock   sync.Mutex
@@ -204,8 +206,14 @@ func (m *mockToolServer) CallTool(
 	return mcp.CallToolResult{}, nil
 }
 
-func (m mockToolListUpdater) ToolListUpdates() <-chan struct{} {
-	return nil
+func (m mockToolListUpdater) ToolListUpdates() iter.Seq[struct{}] {
+	return func(yield func(struct{}) bool) {
+		for range m.ch {
+			if !yield(struct{}{}) {
+				return
+			}
+		}
+	}
 }
 
 func (m *mockLogHandler) LogStreams() iter.Seq[mcp.LogParams] {

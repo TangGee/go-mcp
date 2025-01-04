@@ -183,7 +183,7 @@ type ToolServer interface {
 //
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type ToolListUpdater interface {
-	ToolListUpdates() <-chan struct{}
+	ToolListUpdates() iter.Seq[struct{}]
 }
 
 // LogHandler provides an interface for streaming log messages from the MCP server to connected clients.

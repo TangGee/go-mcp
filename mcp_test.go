@@ -403,6 +403,52 @@ func TestResource(t *testing.T) {
 	}
 }
 
+func TestTool(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		toolServer := mockToolServer{}
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			server:        &mockServer{},
+			serverOptions: []mcp.ServerOption{
+				mcp.WithToolServer(&toolServer),
+			},
+			clientOptions: []mcp.ClientOption{},
+			serverRequirement: mcp.ServerRequirement{
+				ToolServer: true,
+			},
+		}
+
+		t.Run(fmt.Sprintf("%s/ListTools", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListTools(context.Background(), mcp.ListToolsParams{
+				Cursor: "cursor",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if toolServer.listParams.Cursor != "cursor" {
+				t.Errorf("expected cursor cursor, got %s", toolServer.listParams.Cursor)
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/CallTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.CallTool(context.Background(), mcp.CallToolParams{
+				Name: "test-tool",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if toolServer.callParams.Name != "test-tool" {
+				t.Errorf("expected tool name test-tool, got %s", toolServer.callParams.Name)
+			}
+		}))
+	}
+}
+
 func TestLog(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		handler := mockLogHandler{
@@ -455,98 +501,6 @@ func TestLog(t *testing.T) {
 				t.Errorf("expected log level %d, got %d", mcp.LogLevelError, handler.level)
 			}
 		}))
-	}
-}
-
-func TestClientRequest(t *testing.T) {
-	type testCase struct {
-		name              string
-		testType          string // "prompt", "resource", or "tool"
-		serverRequirement mcp.ServerRequirement
-		// interface{} will be type asserted to specific mock server
-		testFunc func(*testing.T, *mcp.Client, interface{})
-	}
-
-	testCases := []testCase{
-		{
-			name:     "ListTools",
-			testType: "tool",
-			serverRequirement: mcp.ServerRequirement{
-				ToolServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockTS, _ := srv.(*mockToolServer)
-				_, err := cli.ListTools(context.Background(), mcp.ListToolsParams{
-					Cursor: "cursor",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockTS.listParams.Cursor != "cursor" {
-					t.Errorf("expected cursor cursor, got %s", mockTS.listParams.Cursor)
-				}
-			},
-		},
-		{
-			name:     "CallTool",
-			testType: "tool",
-			serverRequirement: mcp.ServerRequirement{
-				ToolServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockTS, _ := srv.(*mockToolServer)
-				_, err := cli.CallTool(context.Background(), mcp.CallToolParams{
-					Name: "test-tool",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockTS.callParams.Name != "test-tool" {
-					t.Errorf("expected tool name test-tool, got %s", mockTS.callParams.Name)
-				}
-			},
-		},
-	}
-
-	for _, transport := range []string{"SSE", "StdIO"} {
-		for _, tc := range testCases {
-			srv := &mockServer{}
-			var mockServer interface{}
-			var serverOpt mcp.ServerOption
-
-			switch tc.testType {
-			case "prompt":
-				mockPs := &mockPromptServer{}
-				mockServer = mockPs
-				serverOpt = mcp.WithPromptServer(mockPs)
-			case "resource":
-				mockRs := &mockResourceServer{}
-				mockServer = mockRs
-				serverOpt = mcp.WithResourceServer(mockRs)
-			case "tool":
-				mockTS := &mockToolServer{}
-				mockServer = mockTS
-				serverOpt = mcp.WithToolServer(mockTS)
-			}
-
-			cfg := testSuiteConfig{
-				transportName:     transport,
-				server:            srv,
-				serverOptions:     []mcp.ServerOption{serverOpt},
-				clientOptions:     []mcp.ClientOption{},
-				serverRequirement: tc.serverRequirement,
-			}
-			t.Run(fmt.Sprintf("%s/%s", transport, tc.name), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-				if s.clientConnectErr != nil {
-					t.Errorf("unexpected error: %v", s.clientConnectErr)
-					return
-				}
-
-				tc.testFunc(t, s.mcpClient, mockServer)
-			}))
-		}
 	}
 }
 
