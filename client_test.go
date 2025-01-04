@@ -12,9 +12,15 @@ type mockPromptListWatcher struct {
 	updateCount int
 }
 
-type mockResourceListWatcher struct{}
+type mockResourceListWatcher struct {
+	lock        sync.Mutex
+	updateCount int
+}
 
-type mockResourceSubscribedWatcher struct{}
+type mockResourceSubscribedWatcher struct {
+	lock        sync.Mutex
+	updateCount int
+}
 
 type mockToolListWatcher struct{}
 
@@ -27,12 +33,13 @@ type mockRootsListUpdater struct {
 type mockSamplingHandler struct{}
 
 type mockProgressListener struct {
-	params []mcp.ProgressParams
+	lock        sync.Mutex
+	updateCount int
 }
 
 type mockLogReceiver struct {
-	lock   sync.Mutex
-	params []mcp.LogParams
+	lock        sync.Mutex
+	updateCount int
 }
 
 func (m *mockPromptListWatcher) OnPromptListChanged() {
@@ -41,10 +48,16 @@ func (m *mockPromptListWatcher) OnPromptListChanged() {
 	m.updateCount++
 }
 
-func (m mockResourceListWatcher) OnResourceListChanged() {
+func (m *mockResourceListWatcher) OnResourceListChanged() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.updateCount++
 }
 
-func (m mockResourceSubscribedWatcher) OnResourceSubscribedChanged(string) {
+func (m *mockResourceSubscribedWatcher) OnResourceSubscribedChanged(string) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.updateCount++
 }
 
 func (m mockToolListWatcher) OnToolListChanged() {
@@ -77,12 +90,14 @@ func (m mockSamplingHandler) CreateSampleMessage(context.Context, mcp.SamplingPa
 	}, nil
 }
 
-func (m *mockLogReceiver) OnLog(params mcp.LogParams) {
+func (m *mockLogReceiver) OnLog(mcp.LogParams) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	m.params = append(m.params, params)
+	m.updateCount++
 }
 
-func (m *mockProgressListener) OnProgress(params mcp.ProgressParams) {
-	m.params = append(m.params, params)
+func (m *mockProgressListener) OnProgress(mcp.ProgressParams) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.updateCount++
 }

@@ -83,6 +83,12 @@ func Serve(ctx context.Context, server Server, transport ServerTransport, option
 	if s.promptListUpdater != nil {
 		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates())
 	}
+	if s.resourceListUpdater != nil {
+		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates())
+	}
+	if s.resourceSubscribedUpdater != nil {
+		go s.listenSubcribedResources()
+	}
 	if s.logHandler != nil {
 		go s.listenLogs()
 	}
@@ -365,6 +371,29 @@ func (s server) ping(sessID string) {
 	}
 }
 
+func (s server) listenSubcribedResources() {
+	for uri := range s.resourceSubscribedUpdater.ResourceSubscribedUpdates() {
+		params := notificationsResourcesUpdatedParams{
+			URI: uri,
+		}
+		paramsBs, err := json.Marshal(params)
+		if err != nil {
+			s.logger.Error("failed to marshal resources updated params", "err", err)
+			continue
+		}
+		msg := JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
+			Method:  methodNotificationsResourcesUpdated,
+			Params:  paramsBs,
+		}
+		select {
+		case <-s.done:
+			return
+		case s.broadcasts <- msg:
+		}
+	}
+}
+
 func (s server) listenLogs() {
 	for params := range s.logHandler.LogStreams() {
 		paramsBs, err := json.Marshal(params)
@@ -400,16 +429,6 @@ func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
 }
 
 func (s server) listenNotifications() {
-	var rlUpdates <-chan struct{}
-	if s.resourceListUpdater != nil {
-		rlUpdates = s.resourceListUpdater.ResourceListUpdates()
-	}
-
-	var rsUpdates <-chan string
-	if s.resourceSubscribedUpdater != nil {
-		rsUpdates = s.resourceSubscribedUpdater.ResourceSubscribedUpdates()
-	}
-
 	var tlUpdates <-chan struct{}
 	if s.toolListUpdater != nil {
 		tlUpdates = s.toolListUpdater.ToolListUpdates()
@@ -421,25 +440,6 @@ func (s server) listenNotifications() {
 		select {
 		case <-s.done:
 			return
-		case <-rlUpdates:
-			msg = JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				Method:  methodNotificationsResourcesListChanged,
-			}
-		case uri := <-rsUpdates:
-			params := notificationsResourcesUpdatedParams{
-				URI: uri,
-			}
-			paramsBs, err := json.Marshal(params)
-			if err != nil {
-				s.logger.Error("failed to marshal resources updated params", "err", err)
-				continue
-			}
-			msg = JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				Method:  methodNotificationsResourcesUpdated,
-				Params:  paramsBs,
-			}
 		case <-tlUpdates:
 			msg = JSONRPCMessage{
 				JSONRPC: JSONRPCVersion,

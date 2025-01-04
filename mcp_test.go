@@ -76,8 +76,8 @@ func TestInitialize(t *testing.T) {
 			},
 			clientOptions: []mcp.ClientOption{
 				mcp.WithPromptListWatcher(&mockPromptListWatcher{}),
-				mcp.WithResourceListWatcher(mockResourceListWatcher{}),
-				mcp.WithResourceSubscribedWatcher(mockResourceSubscribedWatcher{}),
+				mcp.WithResourceListWatcher(&mockResourceListWatcher{}),
+				mcp.WithResourceSubscribedWatcher(&mockResourceSubscribedWatcher{}),
 				mcp.WithToolListWatcher(mockToolListWatcher{}),
 				mcp.WithRootsListHandler(mockRootsListHandler{}),
 				mcp.WithRootsListUpdater(mockRootsListUpdater{}),
@@ -178,17 +178,18 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
+
+			time.Sleep(100 * time.Millisecond)
+
 			if promptServer.listParams.Cursor != "cursor" {
 				t.Errorf("expected cursor cursor, got %s", promptServer.listParams.Cursor)
 			}
-			if len(progressListener.params) != 10 {
-				t.Errorf("expected 10 progress params, got %d", len(progressListener.params))
+
+			progressListener.lock.Lock()
+			defer progressListener.lock.Unlock()
+			if progressListener.updateCount != 10 {
+				t.Errorf("expected 10 progress params, got %d", progressListener.updateCount)
 				return
-			}
-			for i := 0; i < 10; i++ {
-				if progressListener.params[i].ProgressToken != "progressToken" {
-					t.Errorf("expected progressToken progressToken, got %s", progressListener.params[i].ProgressToken)
-				}
 			}
 		}))
 
@@ -200,6 +201,9 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
+
+			time.Sleep(100 * time.Millisecond)
+
 			if promptServer.getParams.Name != "test-prompt" {
 				t.Errorf("expected prompt name test-prompt, got %s", promptServer.getParams.Name)
 			}
@@ -216,6 +220,9 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
+
+			time.Sleep(100 * time.Millisecond)
+
 			if promptServer.completesParams.Ref.Name != "test-prompt" {
 				t.Errorf("expected prompt name test-prompt, got %s", promptServer.completesParams.Ref.Name)
 			}
@@ -239,7 +246,136 @@ func TestPrompt(t *testing.T) {
 			promptListWatcher.lock.Lock()
 			defer promptListWatcher.lock.Unlock()
 			if promptListWatcher.updateCount != 5 {
-				t.Errorf("expected 10 prompt list updates, got %d", promptListWatcher.updateCount)
+				t.Errorf("expected 5 prompt list updates, got %d", promptListWatcher.updateCount)
+			}
+		}))
+	}
+}
+
+func TestResource(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		resourceServer := mockResourceServer{
+			delayList: true,
+		}
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			server:        &mockServer{},
+			serverOptions: []mcp.ServerOption{
+				mcp.WithResourceServer(&resourceServer),
+			},
+			serverRequirement: mcp.ServerRequirement{
+				ResourceServer: true,
+			},
+		}
+
+		t.Run(fmt.Sprintf("%s/ListResourcesCancelled", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			ctx, cancel := context.WithCancel(context.Background())
+			go func() {
+				time.Sleep(100 * time.Millisecond)
+				cancel()
+			}()
+			_, err := s.mcpClient.ListResources(ctx, mcp.ListResourcesParams{
+				Cursor: "cursor",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+				return
+			}
+		}))
+
+		resourceServer.delayList = false
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceServer(&resourceServer))
+
+		t.Run(fmt.Sprintf("%s/ListResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListResources(context.Background(), mcp.ListResourcesParams{
+				Cursor: "cursor",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if resourceServer.listParams.Cursor != "cursor" {
+				t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/ReadResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ReadResource(context.Background(), mcp.ReadResourceParams{
+				URI: "test://resource",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if resourceServer.readParams.URI != "test://resource" {
+				t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/ListResourceTemplates", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
+				Meta: mcp.ParamsMeta{
+					ProgressToken: "progressToken",
+				},
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if resourceServer.listTemplatesParams.Meta.ProgressToken != "progressToken" {
+				t.Errorf("expected progressToken progressToken, got %s", resourceServer.listTemplatesParams.Meta.ProgressToken)
+			}
+		}))
+
+		t.Run(fmt.Sprintf("%s/CompletesResourceTemplate", transportName),
+			testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+				_, err := s.mcpClient.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
+					Ref: mcp.CompletionRef{
+						Type: mcp.CompletionRefResource,
+						Name: "test-resource",
+					},
+				})
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+					return
+				}
+
+				time.Sleep(100 * time.Millisecond)
+
+				if resourceServer.completesTemplateParams.Ref.Name != "test-resource" {
+					t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
+				}
+			}))
+
+		resourceListUpdater := mockResourceListUpdater{
+			ch: make(chan struct{}),
+		}
+		resourceListWatcher := mockResourceListWatcher{}
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceListUpdater(resourceListUpdater))
+		cfg.clientOptions = append(cfg.clientOptions, mcp.WithResourceListWatcher(&resourceListWatcher))
+
+		t.Run(fmt.Sprintf("%s/UpdateResourceList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			for i := 0; i < 5; i++ {
+				resourceListUpdater.ch <- struct{}{}
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			resourceListWatcher.lock.Lock()
+			defer resourceListWatcher.lock.Unlock()
+			if resourceListWatcher.updateCount != 5 {
+				t.Errorf("expected 5 resource list updates, got %d", resourceListWatcher.updateCount)
 			}
 		}))
 	}
@@ -278,8 +414,8 @@ func TestLog(t *testing.T) {
 
 			receiver.lock.Lock()
 			defer receiver.lock.Unlock()
-			if len(receiver.params) != 10 {
-				t.Errorf("expected 10 log params, got %d", len(receiver.params))
+			if receiver.updateCount != 10 {
+				t.Errorf("expected 10 log params, got %d", receiver.updateCount)
 			}
 		}))
 
@@ -310,131 +446,6 @@ func TestClientRequest(t *testing.T) {
 	}
 
 	testCases := []testCase{
-		{
-			name:     "ListResources",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRs, _ := srv.(*mockResourceServer)
-				_, err := cli.ListResources(context.Background(), mcp.ListResourcesParams{
-					Cursor: "cursor",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRs.listParams.Cursor != "cursor" {
-					t.Errorf("expected cursor cursor, got %s", mockRs.listParams.Cursor)
-				}
-			},
-		},
-		{
-			name:     "ReadResource",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRs, _ := srv.(*mockResourceServer)
-				_, err := cli.ReadResource(context.Background(), mcp.ReadResourceParams{
-					URI: "test://resource",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRs.readParams.URI != "test://resource" {
-					t.Errorf("expected URI test://resource, got %s", mockRs.readParams.URI)
-				}
-			},
-		},
-		{
-			name:     "ListResourceTemplates",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRs, _ := srv.(*mockResourceServer)
-				_, err := cli.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
-					Meta: mcp.ParamsMeta{
-						ProgressToken: "progressToken",
-					},
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRs.listTemplatesParams.Meta.ProgressToken != "progressToken" {
-					t.Errorf("expected progressToken progressToken, got %s", mockRs.listTemplatesParams.Meta.ProgressToken)
-				}
-			},
-		},
-		{
-			name:     "CompletesResourceTemplate",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRs, _ := srv.(*mockResourceServer)
-				_, err := cli.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
-					Ref: mcp.CompletionRef{
-						Type: mcp.CompletionRefResource,
-						Name: "test-resource",
-					},
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRs.completesTemplateParams.Ref.Name != "test-resource" {
-					t.Errorf("expected resource name test-resource, got %s", mockRs.completesTemplateParams.Ref.Name)
-				}
-			},
-		},
-		{
-			name:     "SubscribeResource",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRS, _ := srv.(*mockResourceServer)
-				err := cli.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
-					URI: "test://resource",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRS.subscribeParams.URI != "test://resource" {
-					t.Errorf("expected URI test://resource, got %s", mockRS.subscribeParams.URI)
-				}
-			},
-		},
-		{
-			name:     "UnsubscribeResource",
-			testType: "resource",
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			testFunc: func(t *testing.T, cli *mcp.Client, srv interface{}) {
-				mockRS, _ := srv.(*mockResourceServer)
-				err := cli.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
-					URI: "test://resource",
-				})
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-					return
-				}
-				if mockRS.unsubscribeParams.URI != "test://resource" {
-					t.Errorf("expected URI test://resource, got %s", mockRS.unsubscribeParams.URI)
-				}
-			},
-		},
 		{
 			name:     "ListTools",
 			testType: "tool",

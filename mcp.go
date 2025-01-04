@@ -141,7 +141,7 @@ type ResourceServer interface {
 //
 // A struct{} is sent through the channel as only the notification matters, not the value.
 type ResourceListUpdater interface {
-	ResourceListUpdates() <-chan struct{}
+	ResourceListUpdates() iter.Seq[struct{}]
 }
 
 // ResourceSubscribedUpdater provides an interface for monitoring changes to subscribed resources.
@@ -157,7 +157,7 @@ type ResourceListUpdater interface {
 //
 // A string (resource URI) is sent through the channel to identify which resource changed.
 type ResourceSubscribedUpdater interface {
-	ResourceSubscribedUpdates() <-chan string
+	ResourceSubscribedUpdates() iter.Seq[string]
 }
 
 // ToolServer defines the interface for managing tools in the MCP protocol.

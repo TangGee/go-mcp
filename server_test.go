@@ -4,6 +4,7 @@ import (
 	"context"
 	"iter"
 	"sync"
+	"time"
 
 	"github.com/MegaGrindStone/go-mcp"
 )
@@ -24,6 +25,7 @@ type mockPromptListUpdater struct {
 }
 
 type mockResourceServer struct {
+	delayList               bool
 	listParams              mcp.ListResourcesParams
 	readParams              mcp.ReadResourceParams
 	listTemplatesParams     mcp.ListResourceTemplatesParams
@@ -32,9 +34,13 @@ type mockResourceServer struct {
 	unsubscribeParams       mcp.UnsubscribeResourceParams
 }
 
-type mockResourceListUpdater struct{}
+type mockResourceListUpdater struct {
+	ch chan struct{}
+}
 
-type mockResourceSubscribedUpdater struct{}
+type mockResourceSubscribedUpdater struct {
+	ch chan string
+}
 
 type mockToolServer struct {
 	listParams mcp.ListToolsParams
@@ -110,11 +116,18 @@ func (m mockPromptListUpdater) PromptListUpdates() iter.Seq[struct{}] {
 }
 
 func (m *mockResourceServer) ListResources(
-	_ context.Context,
+	ctx context.Context,
 	params mcp.ListResourcesParams,
 	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.ListResourcesResult, error) {
+	if m.delayList {
+		select {
+		case <-ctx.Done():
+			return mcp.ListResourcesResult{}, ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
+	}
 	m.listParams = params
 	return mcp.ListResourcesResult{}, nil
 }
@@ -156,12 +169,24 @@ func (m *mockResourceServer) UnsubscribeResource(params mcp.UnsubscribeResourceP
 	m.unsubscribeParams = params
 }
 
-func (m mockResourceListUpdater) ResourceListUpdates() <-chan struct{} {
-	return nil
+func (m mockResourceListUpdater) ResourceListUpdates() iter.Seq[struct{}] {
+	return func(yield func(struct{}) bool) {
+		for range m.ch {
+			if !yield(struct{}{}) {
+				return
+			}
+		}
+	}
 }
 
-func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() <-chan string {
-	return nil
+func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for uri := range m.ch {
+			if !yield(uri) {
+				return
+			}
+		}
+	}
 }
 
 func (m *mockToolServer) ListTools(
