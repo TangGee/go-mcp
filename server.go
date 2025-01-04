@@ -32,9 +32,9 @@ type server struct {
 	promptServer      PromptServer
 	promptListUpdater PromptListUpdater
 
-	resourceServer            ResourceServer
-	resourceListUpdater       ResourceListUpdater
-	resourceSubscribedUpdater ResourceSubscribedUpdater
+	resourceServer              ResourceServer
+	resourceListUpdater         ResourceListUpdater
+	resourceSubscriptionHandler ResourceSubscriptionHandler
 
 	toolServer      ToolServer
 	toolListUpdater ToolListUpdater
@@ -86,7 +86,7 @@ func Serve(ctx context.Context, server Server, transport ServerTransport, option
 	if s.resourceListUpdater != nil {
 		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates())
 	}
-	if s.resourceSubscribedUpdater != nil {
+	if s.resourceSubscriptionHandler != nil {
 		go s.listenSubcribedResources()
 	}
 	if s.logHandler != nil {
@@ -125,10 +125,10 @@ func WithResourceListUpdater(updater ResourceListUpdater) ServerOption {
 	}
 }
 
-// WithResourceSubscribedUpdater sets the resource subscribe watcher for the server.
-func WithResourceSubscribedUpdater(updater ResourceSubscribedUpdater) ServerOption {
+// WithResourceSubscriptionHandler sets the resource subscription handler for the server.
+func WithResourceSubscriptionHandler(handler ResourceSubscriptionHandler) ServerOption {
 	return func(s *server) {
-		s.resourceSubscribedUpdater = updater
+		s.resourceSubscriptionHandler = handler
 	}
 }
 
@@ -225,7 +225,7 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 		if s.resourceListUpdater != nil {
 			s.capabilities.Resources.ListChanged = true
 		}
-		if s.resourceSubscribedUpdater != nil {
+		if s.resourceSubscriptionHandler != nil {
 			s.capabilities.Resources.Subscribe = true
 		}
 	}
@@ -372,7 +372,7 @@ func (s server) ping(sessID string) {
 }
 
 func (s server) listenSubcribedResources() {
-	for uri := range s.resourceSubscribedUpdater.ResourceSubscribedUpdates() {
+	for uri := range s.resourceSubscriptionHandler.SubscribedResourceUpdates() {
 		params := notificationsResourcesUpdatedParams{
 			URI: uri,
 		}
@@ -479,8 +479,6 @@ func (s server) listenMessages(sessID string, msgs iter.Seq[JSONRPCMessage]) {
 			go s.handleListResourceTemplates(sessID, msg)
 		case MethodResourcesSubscribe:
 			go s.handleSubscribeResource(sessID, msg)
-		case MethodResourcesUnsubscribe:
-			go s.handleUnsubscribeResource(sessID, msg)
 		case MethodToolsList:
 			go s.handleListTools(sessID, msg)
 		case MethodToolsCall:
@@ -756,7 +754,7 @@ func (s server) handleListResourceTemplates(sessID string, msg JSONRPCMessage) {
 }
 
 func (s server) handleSubscribeResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
+	if s.resourceSubscriptionHandler == nil || !s.initialized {
 		return
 	}
 
@@ -770,27 +768,7 @@ func (s server) handleSubscribeResource(sessID string, msg JSONRPCMessage) {
 		return
 	}
 
-	s.resourceServer.SubscribeResource(params)
-
-	s.sendResult(sessID, msg.ID, nil)
-}
-
-func (s server) handleUnsubscribeResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
-		return
-	}
-
-	var params UnsubscribeResourceParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	s.resourceServer.UnsubscribeResource(params)
+	s.resourceSubscriptionHandler.SubscribeResource(params)
 
 	s.sendResult(sessID, msg.ID, nil)
 }

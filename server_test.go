@@ -30,16 +30,15 @@ type mockResourceServer struct {
 	readParams              mcp.ReadResourceParams
 	listTemplatesParams     mcp.ListResourceTemplatesParams
 	completesTemplateParams mcp.CompletesCompletionParams
-	subscribeParams         mcp.SubscribeResourceParams
-	unsubscribeParams       mcp.UnsubscribeResourceParams
 }
 
 type mockResourceListUpdater struct {
 	ch chan struct{}
 }
 
-type mockResourceSubscribedUpdater struct {
-	ch chan string
+type mockResourceSubscriptionHandler struct {
+	subscribeParams mcp.SubscribeResourceParams
+	ch              chan string
 }
 
 type mockToolServer struct {
@@ -161,14 +160,6 @@ func (m *mockResourceServer) CompletesResourceTemplate(
 	return mcp.CompletionResult{}, nil
 }
 
-func (m *mockResourceServer) SubscribeResource(params mcp.SubscribeResourceParams) {
-	m.subscribeParams = params
-}
-
-func (m *mockResourceServer) UnsubscribeResource(params mcp.UnsubscribeResourceParams) {
-	m.unsubscribeParams = params
-}
-
 func (m mockResourceListUpdater) ResourceListUpdates() iter.Seq[struct{}] {
 	return func(yield func(struct{}) bool) {
 		for range m.ch {
@@ -179,7 +170,11 @@ func (m mockResourceListUpdater) ResourceListUpdates() iter.Seq[struct{}] {
 	}
 }
 
-func (m mockResourceSubscribedUpdater) ResourceSubscribedUpdates() iter.Seq[string] {
+func (m *mockResourceSubscriptionHandler) SubscribeResource(params mcp.SubscribeResourceParams) {
+	m.subscribeParams = params
+}
+
+func (m *mockResourceSubscriptionHandler) SubscribedResourceUpdates() iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for uri := range m.ch {
 			if !yield(uri) {

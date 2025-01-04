@@ -120,12 +120,6 @@ type ResourceServer interface {
 	// The RequestClientFunc enables client-server communication during execution.
 	// Returns error if template doesn't exist, completions cannot be generated, or context is cancelled.
 	CompletesResourceTemplate(context.Context, CompletesCompletionParams, RequestClientFunc) (CompletionResult, error)
-
-	// SubscribeResource registers interest in a specific resource URI.
-	SubscribeResource(SubscribeResourceParams)
-
-	// UnsubscribeResource unregisters interest in a specific resource URI.
-	UnsubscribeResource(UnsubscribeResourceParams)
 }
 
 // ResourceListUpdater provides an interface for monitoring changes to the available resources list.
@@ -156,8 +150,9 @@ type ResourceListUpdater interface {
 // - Never block on sends using buffered channels or dropped notifications
 //
 // A string (resource URI) is sent through the channel to identify which resource changed.
-type ResourceSubscribedUpdater interface {
-	ResourceSubscribedUpdates() iter.Seq[string]
+type ResourceSubscriptionHandler interface {
+	SubscribeResource(SubscribeResourceParams)
+	SubscribedResourceUpdates() iter.Seq[string]
 }
 
 // ToolServer defines the interface for managing tools in the MCP protocol.
@@ -813,8 +808,6 @@ const (
 	MethodResourcesTemplatesList = "resources/templates/list"
 	// MethodResourcesSubscribe is the method name for subscribing to resource updates.
 	MethodResourcesSubscribe = "resources/subscribe"
-	// MethodResourcesUnsubscribe is the method name for unsubscribing from resource updates.
-	MethodResourcesUnsubscribe = "resources/unsubscribe"
 
 	// MethodToolsList is the method name for retrieving a list of available tools.
 	MethodToolsList = "tools/list"

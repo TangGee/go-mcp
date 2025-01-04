@@ -584,36 +584,6 @@ func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResource
 	return nil
 }
 
-// UnsubscribeResource cancels an existing subscription for notifications about changes
-// to a specific resource. After unsubscribing, the client will no longer receive
-// notifications through the ResourceSubscribedWatcher interface for this resource.
-//
-// See UnsubscribeResourceParams for details on available parameters including resource URI.
-func (c *Client) UnsubscribeResource(ctx context.Context, params UnsubscribeResourceParams) error {
-	if !c.initialized {
-		return errors.New("client not initialized")
-	}
-
-	paramsBs, err := json.Marshal(params)
-	if err != nil {
-		return fmt.Errorf("failed to marshal params: %w", err)
-	}
-	res, err := c.sendRequest(ctx, JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		Method:  MethodResourcesUnsubscribe,
-		Params:  paramsBs,
-	})
-	if err != nil {
-		return err
-	}
-
-	if res.Error != nil {
-		return fmt.Errorf("result error: %w", res.Error)
-	}
-
-	return nil
-}
-
 // ListTools retrieves a paginated list of available tools from the server.
 // It returns a ListToolsResult containing tool metadata and pagination information.
 //

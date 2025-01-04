@@ -68,7 +68,7 @@ func TestInitialize(t *testing.T) {
 				mcp.WithPromptListUpdater(mockPromptListUpdater{}),
 				mcp.WithResourceServer(&mockResourceServer{}),
 				mcp.WithResourceListUpdater(mockResourceListUpdater{}),
-				mcp.WithResourceSubscribedUpdater(mockResourceSubscribedUpdater{}),
+				mcp.WithResourceSubscriptionHandler(&mockResourceSubscriptionHandler{}),
 				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithToolListUpdater(mockToolListUpdater{}),
 				mcp.WithLogHandler(&mockLogHandler{}),
@@ -179,11 +179,11 @@ func TestPrompt(t *testing.T) {
 				return
 			}
 
-			time.Sleep(100 * time.Millisecond)
-
 			if promptServer.listParams.Cursor != "cursor" {
 				t.Errorf("expected cursor cursor, got %s", promptServer.listParams.Cursor)
 			}
+
+			time.Sleep(100 * time.Millisecond)
 
 			progressListener.lock.Lock()
 			defer progressListener.lock.Unlock()
@@ -202,8 +202,6 @@ func TestPrompt(t *testing.T) {
 				return
 			}
 
-			time.Sleep(100 * time.Millisecond)
-
 			if promptServer.getParams.Name != "test-prompt" {
 				t.Errorf("expected prompt name test-prompt, got %s", promptServer.getParams.Name)
 			}
@@ -220,8 +218,6 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-
-			time.Sleep(100 * time.Millisecond)
 
 			if promptServer.completesParams.Ref.Name != "test-prompt" {
 				t.Errorf("expected prompt name test-prompt, got %s", promptServer.completesParams.Ref.Name)
@@ -296,8 +292,6 @@ func TestResource(t *testing.T) {
 				return
 			}
 
-			time.Sleep(100 * time.Millisecond)
-
 			if resourceServer.listParams.Cursor != "cursor" {
 				t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
 			}
@@ -311,8 +305,6 @@ func TestResource(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-
-			time.Sleep(100 * time.Millisecond)
 
 			if resourceServer.readParams.URI != "test://resource" {
 				t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
@@ -329,8 +321,6 @@ func TestResource(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 				return
 			}
-
-			time.Sleep(100 * time.Millisecond)
 
 			if resourceServer.listTemplatesParams.Meta.ProgressToken != "progressToken" {
 				t.Errorf("expected progressToken progressToken, got %s", resourceServer.listTemplatesParams.Meta.ProgressToken)
@@ -350,12 +340,44 @@ func TestResource(t *testing.T) {
 					return
 				}
 
-				time.Sleep(100 * time.Millisecond)
-
 				if resourceServer.completesTemplateParams.Ref.Name != "test-resource" {
 					t.Errorf("expected cursor cursor, got %s", resourceServer.listParams.Cursor)
 				}
 			}))
+
+		resourceSubscriptionHandler := mockResourceSubscriptionHandler{
+			ch: make(chan string),
+		}
+		resourceSubscriptionWatcher := mockResourceSubscribedWatcher{}
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceSubscriptionHandler(&resourceSubscriptionHandler))
+		cfg.clientOptions = append(cfg.clientOptions, mcp.WithResourceSubscribedWatcher(&resourceSubscriptionWatcher))
+
+		t.Run(fmt.Sprintf("%s/SubscribeResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			err := s.mcpClient.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
+				URI: "test://resource",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if resourceSubscriptionHandler.subscribeParams.URI != "test://resource" {
+				t.Errorf("expected URI test://resource, got %s", resourceSubscriptionHandler.subscribeParams.URI)
+			}
+
+			for i := 0; i < 5; i++ {
+				resourceSubscriptionHandler.ch <- "test://resource"
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			resourceSubscriptionWatcher.lock.Lock()
+			defer resourceSubscriptionWatcher.lock.Unlock()
+			if resourceSubscriptionWatcher.updateCount != 5 {
+				t.Errorf("expected 5 resource subscribed, got %d", resourceSubscriptionWatcher.updateCount)
+			}
+		}))
 
 		resourceListUpdater := mockResourceListUpdater{
 			ch: make(chan struct{}),
