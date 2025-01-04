@@ -222,7 +222,7 @@ type RootsListHandler interface {
 type RootsListUpdater interface {
 	// RootsListUpdates returns a channel that emits notifications when the root list changes.
 	// The returned channel remains open for the lifetime of the updater and is safe for concurrent use.
-	RootsListUpdates() <-chan struct{}
+	RootsListUpdates() iter.Seq[struct{}]
 }
 
 // SamplingHandler provides an interface for generating AI model responses based on conversation history.

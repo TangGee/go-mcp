@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split `Transport` interface into `ServerTransport` and `ClientTransport` interfaces. `ClientTransport` doesn't need session-based messages as `Client` would just use one `Session` in its lifecycle.
 - Use iterator pattern for sessions in `ServerTransport` and messages in `ClientTransport`.
 - Use iterator pattern for streaming logs in `LogHandler`.
-- Use iterator pattern for all the updaters in `Server` interface.
+- Use iterator pattern for all the updaters. 
 - Use `io.ReadCloser` and `io.WriteCloser` for `StdIO` transport.
 
 ### Removed

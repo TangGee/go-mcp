@@ -690,9 +690,8 @@ func (c *Client) start(ctx context.Context) {
 	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
 	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
 
-	var rlUpdates <-chan struct{}
 	if c.rootsListUpdater != nil {
-		rlUpdates = c.rootsListUpdater.RootsListUpdates()
+		go c.listenListRootUpdates(ctx)
 	}
 
 	for {
@@ -723,10 +722,14 @@ func (c *Client) start(ctx context.Context) {
 			}
 			cancel()
 			delete(cancels, msgID)
-		case <-rlUpdates:
-			if err := c.sendNotification(ctx, methodNotificationsRootsListChanged, nil); err != nil {
-				c.logger.Error("failed to send notification on roots list change", "err", err)
-			}
+		}
+	}
+}
+
+func (c Client) listenListRootUpdates(ctx context.Context) {
+	for range c.rootsListUpdater.RootsListUpdates() {
+		if err := c.sendNotification(ctx, methodNotificationsRootsListChanged, nil); err != nil {
+			c.logger.Error("failed to send notification on roots list change", "err", err)
 		}
 	}
 }

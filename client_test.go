@@ -2,6 +2,7 @@ package mcp_test
 
 import (
 	"context"
+	"iter"
 	"sync"
 
 	"github.com/MegaGrindStone/go-mcp"
@@ -24,13 +25,17 @@ type mockResourceSubscribedWatcher struct {
 
 type mockToolListWatcher struct{}
 
-type mockRootsListHandler struct{}
+type mockRootsListHandler struct {
+	called bool
+}
 
 type mockRootsListUpdater struct {
 	ch chan struct{}
 }
 
-type mockSamplingHandler struct{}
+type mockSamplingHandler struct {
+	called bool
+}
 
 type mockProgressListener struct {
 	lock        sync.Mutex
@@ -63,7 +68,8 @@ func (m *mockResourceSubscribedWatcher) OnResourceSubscribedChanged(string) {
 func (m mockToolListWatcher) OnToolListChanged() {
 }
 
-func (m mockRootsListHandler) RootsList(context.Context) (mcp.RootList, error) {
+func (m *mockRootsListHandler) RootsList(context.Context) (mcp.RootList, error) {
+	m.called = true
 	return mcp.RootList{
 		Roots: []mcp.Root{
 			{URI: "test://root", Name: "Test Root"},
@@ -71,14 +77,18 @@ func (m mockRootsListHandler) RootsList(context.Context) (mcp.RootList, error) {
 	}, nil
 }
 
-func (m mockRootsListUpdater) RootsListUpdates() <-chan struct{} {
-	if m.ch == nil {
-		m.ch = make(chan struct{})
+func (m mockRootsListUpdater) RootsListUpdates() iter.Seq[struct{}] {
+	return func(yield func(struct{}) bool) {
+		for range m.ch {
+			if !yield(struct{}{}) {
+				return
+			}
+		}
 	}
-	return m.ch
 }
 
-func (m mockSamplingHandler) CreateSampleMessage(context.Context, mcp.SamplingParams) (mcp.SamplingResult, error) {
+func (m *mockSamplingHandler) CreateSampleMessage(context.Context, mcp.SamplingParams) (mcp.SamplingResult, error) {
+	m.called = true
 	return mcp.SamplingResult{
 		Role: mcp.PromptRoleAssistant,
 		Content: mcp.SamplingContent{

@@ -2,6 +2,8 @@ package mcp_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"iter"
 	"sync"
 	"time"
@@ -44,6 +46,9 @@ type mockResourceSubscriptionHandler struct {
 type mockToolServer struct {
 	listParams mcp.ListToolsParams
 	callParams mcp.CallToolParams
+
+	requestRootsList bool
+	requestSampling  bool
 }
 
 type mockToolListUpdater struct {
@@ -56,7 +61,10 @@ type mockLogHandler struct {
 	params chan mcp.LogParams
 }
 
-type mockRootsListWatcher struct{}
+type mockRootsListWatcher struct {
+	lock        sync.Mutex
+	updateCount int
+}
 
 func (m mockServer) Info() mcp.Info {
 	return mcp.Info{Name: "test-server", Version: "1.0"}
@@ -190,9 +198,18 @@ func (m *mockToolServer) ListTools(
 	_ context.Context,
 	params mcp.ListToolsParams,
 	_ mcp.ProgressReporter,
-	_ mcp.RequestClientFunc,
+	clientFunct mcp.RequestClientFunc,
 ) (mcp.ListToolsResult, error) {
 	m.listParams = params
+	if m.requestRootsList {
+		_, err := clientFunct(mcp.JSONRPCMessage{
+			JSONRPC: mcp.JSONRPCVersion,
+			Method:  mcp.MethodRootsList,
+		})
+		if err != nil {
+			return mcp.ListToolsResult{}, err
+		}
+	}
 	return mcp.ListToolsResult{}, nil
 }
 
@@ -200,8 +217,23 @@ func (m *mockToolServer) CallTool(
 	_ context.Context,
 	params mcp.CallToolParams,
 	_ mcp.ProgressReporter,
-	_ mcp.RequestClientFunc,
+	clientFunc mcp.RequestClientFunc,
 ) (mcp.CallToolResult, error) {
+	if m.requestSampling {
+		samplingParams := mcp.SamplingParams{}
+		samplingParamsBs, err := json.Marshal(samplingParams)
+		if err != nil {
+			return mcp.CallToolResult{}, fmt.Errorf("failed to marshal sampling params: %w", err)
+		}
+		_, err = clientFunc(mcp.JSONRPCMessage{
+			JSONRPC: mcp.JSONRPCVersion,
+			Method:  mcp.MethodSamplingCreateMessage,
+			Params:  samplingParamsBs,
+		})
+		if err != nil {
+			return mcp.CallToolResult{}, err
+		}
+	}
 	m.callParams = params
 	return mcp.CallToolResult{}, nil
 }
@@ -232,5 +264,8 @@ func (m *mockLogHandler) SetLogLevel(level mcp.LogLevel) {
 	m.level = level
 }
 
-func (m mockRootsListWatcher) OnRootsListChanged() {
+func (m *mockRootsListWatcher) OnRootsListChanged() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.updateCount++
 }

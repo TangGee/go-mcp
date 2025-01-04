@@ -72,16 +72,16 @@ func TestInitialize(t *testing.T) {
 				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithToolListUpdater(mockToolListUpdater{}),
 				mcp.WithLogHandler(&mockLogHandler{}),
-				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
+				mcp.WithRootsListWatcher(&mockRootsListWatcher{}),
 			},
 			clientOptions: []mcp.ClientOption{
 				mcp.WithPromptListWatcher(&mockPromptListWatcher{}),
 				mcp.WithResourceListWatcher(&mockResourceListWatcher{}),
 				mcp.WithResourceSubscribedWatcher(&mockResourceSubscribedWatcher{}),
 				mcp.WithToolListWatcher(mockToolListWatcher{}),
-				mcp.WithRootsListHandler(mockRootsListHandler{}),
+				mcp.WithRootsListHandler(&mockRootsListHandler{}),
 				mcp.WithRootsListUpdater(mockRootsListUpdater{}),
-				mcp.WithSamplingHandler(mockSamplingHandler{}),
+				mcp.WithSamplingHandler(&mockSamplingHandler{}),
 				mcp.WithLogReceiver(&mockLogReceiver{}),
 			},
 			serverRequirement: mcp.ServerRequirement{
@@ -112,7 +112,7 @@ func TestInitialize(t *testing.T) {
 				mcp.WithPromptServer(&mockPromptServer{}),
 				mcp.WithToolServer(&mockToolServer{}),
 				mcp.WithLogHandler(&mockLogHandler{}),
-				mcp.WithRootsListWatcher(mockRootsListWatcher{}),
+				mcp.WithRootsListWatcher(&mockRootsListWatcher{}),
 			},
 			clientOptions: []mcp.ClientOption{},
 			serverRequirement: mcp.ServerRequirement{
@@ -405,15 +405,25 @@ func TestResource(t *testing.T) {
 
 func TestTool(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
-		toolServer := mockToolServer{}
+		toolServer := mockToolServer{
+			requestRootsList: true,
+		}
+		rootsListHandler := mockRootsListHandler{}
+		samplingHandler := mockSamplingHandler{}
 
 		cfg := testSuiteConfig{
 			transportName: transportName,
-			server:        &mockServer{},
+			server: &mockServer{
+				requireRootsListClient: true,
+				requireSamplingClient:  true,
+			},
 			serverOptions: []mcp.ServerOption{
 				mcp.WithToolServer(&toolServer),
 			},
-			clientOptions: []mcp.ClientOption{},
+			clientOptions: []mcp.ClientOption{
+				mcp.WithRootsListHandler(&rootsListHandler),
+				mcp.WithSamplingHandler(&samplingHandler),
+			},
 			serverRequirement: mcp.ServerRequirement{
 				ToolServer: true,
 			},
@@ -431,7 +441,17 @@ func TestTool(t *testing.T) {
 			if toolServer.listParams.Cursor != "cursor" {
 				t.Errorf("expected cursor cursor, got %s", toolServer.listParams.Cursor)
 			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if !rootsListHandler.called {
+				t.Errorf("expected roots list handler to be called")
+			}
 		}))
+
+		toolServer.requestRootsList = false
+		toolServer.requestSampling = true
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/CallTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			_, err := s.mcpClient.CallTool(context.Background(), mcp.CallToolParams{
@@ -444,6 +464,47 @@ func TestTool(t *testing.T) {
 
 			if toolServer.callParams.Name != "test-tool" {
 				t.Errorf("expected tool name test-tool, got %s", toolServer.callParams.Name)
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			if !samplingHandler.called {
+				t.Errorf("expected sampling handler to be called")
+			}
+		}))
+	}
+}
+
+func TestRoot(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		rootsListUpdater := mockRootsListUpdater{
+			ch: make(chan struct{}),
+		}
+		rootsListWatcher := mockRootsListWatcher{}
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			server:        &mockServer{},
+			serverOptions: []mcp.ServerOption{
+				mcp.WithRootsListWatcher(&rootsListWatcher),
+			},
+			clientOptions: []mcp.ClientOption{
+				mcp.WithRootsListUpdater(rootsListUpdater),
+			},
+			serverRequirement: mcp.ServerRequirement{},
+		}
+
+		t.Run(fmt.Sprintf("%s/UpdateRootList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			for i := 0; i < 5; i++ {
+				rootsListUpdater.ch <- struct{}{}
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			rootsListWatcher.lock.Lock()
+			defer rootsListWatcher.lock.Unlock()
+			if rootsListWatcher.updateCount != 5 {
+				t.Errorf("expected 5 root list updates, got %d", rootsListWatcher.updateCount)
 			}
 		}))
 	}
