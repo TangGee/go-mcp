@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use iterator pattern for all the updaters. 
 - Use `io.ReadCloser` and `io.WriteCloser` for `StdIO` transport.
 - Adjust `everything` server for current interfaces.
+- Adjust `filesystem` server for current interfaces.
 
 ### Removed
 

@@ -30,19 +30,15 @@ func main() {
 	cliIO := mcp.NewStdIO(cliReader, srvWriter)
 	srvIO := mcp.NewStdIO(srvReader, cliWriter)
 
-	go srvIO.Start()
-	go cliIO.Start()
-
 	srv, err := filesystem.NewServer(*path)
 	if err != nil {
 		fmt.Println("Error: failed to create filesystem server:", err)
 		os.Exit(1)
 	}
 
-	errsChan := make(chan error)
 	srvCtx, srvCancel := context.WithCancel(context.Background())
 
-	go mcp.Serve(srvCtx, srv, srvIO, errsChan,
+	go mcp.Serve(srvCtx, srv, srvIO,
 		mcp.WithServerPingInterval(30*time.Second),
 		mcp.WithToolServer(srv),
 	)

@@ -64,11 +64,13 @@ func (s Server) RequireSamplingClient() bool {
 // Returns the list of available filesystem tools supported by this server.
 // The tools provide various filesystem operations like reading, writing, and managing files.
 //
-// The ctx parameter provides context for the operation.
-// The params parameter contains pagination and metadata for the listing operation.
-//
 // Returns a ToolList containing all available filesystem tools and any error encountered.
-func (s Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClientFunc) (mcp.ListToolsResult, error) {
+func (s Server) ListTools(
+	context.Context,
+	mcp.ListToolsParams,
+	mcp.ProgressReporter,
+	mcp.RequestClientFunc,
+) (mcp.ListToolsResult, error) {
 	return toolList, nil
 }
 
@@ -76,14 +78,12 @@ func (s Server) ListTools(context.Context, mcp.ListToolsParams, mcp.RequestClien
 // Executes a specified filesystem tool with the given parameters.
 // All operations are restricted to paths within the server's root directory.
 //
-// The ctx parameter provides context for the operation.
-// The params parameter contains the tool name to execute and its arguments.
-//
 // Returns the tool's execution result and any error encountered.
 // Returns error if the tool is not found or if execution fails.
 func (s Server) CallTool(
 	ctx context.Context,
 	params mcp.CallToolParams,
+	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.CallToolResult, error) {
 	switch params.Name {

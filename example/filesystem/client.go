@@ -45,12 +45,17 @@ func newClient(transport mcp.ClientTransport) client {
 
 func (c client) run() {
 	defer c.stop()
-	go c.listenInterruptSignal()
 
-	if err := c.cli.Connect(); err != nil {
-		fmt.Printf("failed to connect to server: %v\n", err)
-		return
-	}
+	ready := make(chan struct{})
+
+	go func() {
+		if err := c.cli.Connect(c.ctx, ready); err != nil {
+			fmt.Printf("failed to connect to server: %v\n", err)
+			return
+		}
+	}()
+	go c.listenInterruptSignal()
+	<-ready
 
 	for {
 		tools, err := c.cli.ListTools(c.ctx, mcp.ListToolsParams{})
@@ -657,7 +662,6 @@ func (c *client) stop() {
 	c.cancel()
 	if !c.closed {
 		close(c.done)
-		c.cli.Close()
 		c.closed = true
 	}
 }
