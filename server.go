@@ -25,6 +25,7 @@ type ServerOption func(*server)
 type server struct {
 	Server
 
+	instructions               string
 	capabilities               ServerCapabilities
 	requiredClientCapabilities ClientCapabilities
 	transport                  ServerTransport
@@ -159,6 +160,12 @@ func WithRootsListWatcher(watcher RootsListWatcher) ServerOption {
 func WithLogHandler(handler LogHandler) ServerOption {
 	return func(s *server) {
 		s.logHandler = handler
+	}
+}
+
+func WithInstructions(instructions string) ServerOption {
+	return func(s *server) {
+		s.instructions = instructions
 	}
 }
 
@@ -581,6 +588,7 @@ func (s server) handleInitialize(
 		ProtocolVersion: protocolVersion,
 		Capabilities:    serverCap,
 		ServerInfo:      serverInfo,
+		Instructions:    s.instructions,
 	})
 }
 

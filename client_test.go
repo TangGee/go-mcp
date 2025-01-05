@@ -90,7 +90,7 @@ func (m mockRootsListUpdater) RootsListUpdates() iter.Seq[struct{}] {
 func (m *mockSamplingHandler) CreateSampleMessage(context.Context, mcp.SamplingParams) (mcp.SamplingResult, error) {
 	m.called = true
 	return mcp.SamplingResult{
-		Role: mcp.PromptRoleAssistant,
+		Role: mcp.RoleAssistant,
 		Content: mcp.SamplingContent{
 			Type: "text",
 			Text: "Test response",
