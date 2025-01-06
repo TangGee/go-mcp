@@ -81,32 +81,32 @@ func (s Server) ListTools(
 // Returns the tool's execution result and any error encountered.
 // Returns error if the tool is not found or if execution fails.
 func (s Server) CallTool(
-	ctx context.Context,
+	_ context.Context,
 	params mcp.CallToolParams,
 	_ mcp.ProgressReporter,
 	_ mcp.RequestClientFunc,
 ) (mcp.CallToolResult, error) {
 	switch params.Name {
 	case "read_file":
-		return readFile(ctx, s.rootPath, params)
+		return readFile(s.rootPath, params)
 	case "read_multiple_files":
-		return readMultipleFiles(ctx, s.rootPath, params)
+		return readMultipleFiles(s.rootPath, params)
 	case "write_file":
-		return writeFile(ctx, s.rootPath, params)
+		return writeFile(s.rootPath, params)
 	case "edit_file":
-		return editFile(ctx, s.rootPath, params)
+		return editFile(s.rootPath, params)
 	case "create_directory":
-		return createDirectory(ctx, s.rootPath, params)
+		return createDirectory(s.rootPath, params)
 	case "list_directory":
-		return listDirectory(ctx, s.rootPath, params)
+		return listDirectory(s.rootPath, params)
 	case "directory_tree":
-		return directoryTree(ctx, s.rootPath, params)
+		return directoryTree(s.rootPath, params)
 	case "move_file":
-		return moveFile(ctx, s.rootPath, params)
+		return moveFile(s.rootPath, params)
 	case "search_files":
-		return searchFiles(ctx, s.rootPath, params)
+		return searchFiles(s.rootPath, params)
 	case "get_file_info":
-		return getFileInfo(ctx, s.rootPath, params)
+		return getFileInfo(s.rootPath, params)
 	default:
 		return mcp.CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
 	}

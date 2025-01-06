@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update `LogData` to use `json.RawMessage` for flexible data handling
 - Change `InputSchema` field in `Tool` struct to use `json.RawMessage` type, removing dependency on validation library
 - Change `Arguments` field in `CallToolParams` struct to use `json.RawMessage` for flexible argument handling
+- Adjust `filesystem` server for current schema.
 
 ### Removed
 - Remove `Text` and `Blob` fields from `Resource` type (functionality moved to `ResourceContent`)
