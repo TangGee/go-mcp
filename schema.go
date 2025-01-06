@@ -171,9 +171,9 @@ type CallToolParams struct {
 	// Name is the unique identifier of the tool to execute
 	Name string `json:"name"`
 
-	// Arguments is a map of argument name-value pairs
+	// Arguments is a JSON object of argument name-value pairs
 	// Must satisfy required arguments defined in tool's InputSchema field
-	Arguments map[string]any `json:"arguments"`
+	Arguments json.RawMessage `json:"arguments"`
 
 	// Meta contains optional metadata including progressToken for tracking operation progress.
 	// The progressToken is used by ProgressReporter to emit progress updates if supported.
@@ -379,16 +379,9 @@ type ResourceTemplate struct {
 // Tool defines a callable tool with its input schema.
 // InputSchema defines the expected format of arguments for CallTool.
 type Tool struct {
-	Name        string           `json:"name"`
-	Description string           `json:"description,omitempty"`
-	InputSchema *ToolInputSchema `json:"inputSchema,omitempty"`
-}
-
-// ToolInputSchema defines the expected format of arguments for CallTool.
-type ToolInputSchema struct {
-	Type       string         `json:"type"`
-	Required   []string       `json:"required"`
-	Properties map[string]any `json:"properties"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
 // Root represents a root directory or file that the server can operate on.
