@@ -163,6 +163,7 @@ func WithLogHandler(handler LogHandler) ServerOption {
 	}
 }
 
+// WithInstructions sets the instructions for the server.
 func WithInstructions(instructions string) ServerOption {
 	return func(s *server) {
 		s.instructions = instructions
