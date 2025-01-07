@@ -5,16 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.1] - 2025-01-07
+
+This release focuses on adhering to the official JSON Schema specification and improving metadata management. Key changes include the introduction of unified resource content handling, enhanced annotation support, and simplified JSON handling by removing third-party schema validation dependencies. The changes in Tool's InputSchema and CallToolParams' Arguments provide more flexibility by allowing users to implement their own JSON Schema validation.
 
 ### Added
-- Introduce `Annotations` struct for metadata management
-- Add `ResourceContents` struct for unified text and blob handling
-- Implement `UnsubscribeResource` function in subscription handler
-- Add `WithInstructions` server option for client guidance
-- Implement `String` method for `LogLevel` type
+
+- `Annotations` struct for metadata management
+- `ResourceContents` struct for unified text and blob handling
+- `UnsubscribeResource` function in subscription handler
+- `WithInstructions` server option for client guidance
+- `String` method for `LogLevel` type
 
 ### Changed
+
 - Rename `PromptRole` to `Role` for better clarity
 - Enhance `Content` structure with new `Annotations` and `ResourceContent` fields
 - Update resource handling to use `ResourceContent` for embedded resources
@@ -22,12 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `Total` field to completion results for progress tracking
 - Implement `Annotations` support across `Resource` and `ResourceTemplate` types
 - Update `LogData` to use `json.RawMessage` for flexible data handling
-- Change `InputSchema` field in `Tool` struct to use `json.RawMessage` type, removing dependency on validation library
-- Change `Arguments` field in `CallToolParams` struct to use `json.RawMessage` for flexible argument handling
-- Adjust `filesystem` server for current schema.
-- Adjust `everything` server for current schema.
+- Change `InputSchema` field in `Tool` struct to use `json.RawMessage` type
+- Change `Arguments` field in `CallToolParams` struct to use `json.RawMessage`
+- Adjust `filesystem` and `everything` servers for current schema
 
 ### Removed
+
 - Remove `Text` and `Blob` fields from `Resource` type (functionality moved to `ResourceContent`)
 
 ## [0.3.0] - 2025-01-05
