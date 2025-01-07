@@ -73,7 +73,7 @@ func (s *Server) GetPrompt(
 			Description: "A simple prompt",
 			Messages: []mcp.PromptMessage{
 				{
-					Role: mcp.PromptRoleUser,
+					Role: mcp.RoleUser,
 					Content: mcp.Content{
 						Type: mcp.ContentTypeText,
 						Text: "This is a simple prompt without arguments.",
@@ -99,14 +99,14 @@ func (s *Server) GetPrompt(
 			Description: "A complex prompt with arguments",
 			Messages: []mcp.PromptMessage{
 				{
-					Role: mcp.PromptRoleUser,
+					Role: mcp.RoleUser,
 					Content: mcp.Content{
 						Type: mcp.ContentTypeText,
 						Text: fmt.Sprintf("This is a complex prompt with arguments: temperature=%.2f, style=%s", temperature, style),
 					},
 				},
 				{
-					Role: mcp.PromptRoleAssistant,
+					Role: mcp.RoleAssistant,
 					Content: mcp.Content{
 						Type: mcp.ContentTypeText,
 						Text: `
@@ -115,7 +115,7 @@ I understand. You've provided a complex prompt with temperature and style argume
 					},
 				},
 				{
-					Role: mcp.PromptRoleUser,
+					Role: mcp.RoleUser,
 					Content: mcp.Content{
 						Type:     mcp.ContentTypeImage,
 						Data:     mcpTinyImage,
@@ -156,7 +156,8 @@ func (s *Server) CompletesPrompt(
 	return mcp.CompletionResult{
 		Completion: struct {
 			Values  []string `json:"values"`
-			HasMore bool     `json:"hasMore"`
+			HasMore bool     `json:"hasMore,omitempty"`
+			Total   int      `json:"total,omitempty"`
 		}{
 			Values:  values,
 			HasMore: false,

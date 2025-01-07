@@ -39,8 +39,9 @@ type mockResourceListUpdater struct {
 }
 
 type mockResourceSubscriptionHandler struct {
-	subscribeParams mcp.SubscribeResourceParams
-	ch              chan string
+	subscribeParams   mcp.SubscribeResourceParams
+	unsubscribeParams mcp.UnsubscribeResourceParams
+	ch                chan string
 }
 
 type mockToolServer struct {
@@ -182,6 +183,10 @@ func (m mockResourceListUpdater) ResourceListUpdates() iter.Seq[struct{}] {
 
 func (m *mockResourceSubscriptionHandler) SubscribeResource(params mcp.SubscribeResourceParams) {
 	m.subscribeParams = params
+}
+
+func (m *mockResourceSubscriptionHandler) UnsubscribeResource(params mcp.UnsubscribeResourceParams) {
+	m.unsubscribeParams = params
 }
 
 func (m *mockResourceSubscriptionHandler) SubscribedResourceUpdates() iter.Seq[string] {

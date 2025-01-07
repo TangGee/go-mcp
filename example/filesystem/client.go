@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/MegaGrindStone/go-mcp"
+	"github.com/MegaGrindStone/go-mcp/servers/filesystem"
 )
 
 type client struct {
@@ -169,13 +171,14 @@ func (c client) callReadFile() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"path": input,
+	args := filesystem.ReadFileArgs{
+		Path: input,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "read_file",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -205,13 +208,14 @@ func (c client) callReadMultipleFiles() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"paths": strings.Split(input, ","),
+	args := filesystem.ReadMultipleFilesArgs{
+		Paths: strings.Split(input, ","),
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "read_multiple_files",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -258,14 +262,15 @@ func (c client) callWriteFile() bool {
 	}
 	content := input
 
-	args := map[string]any{
-		"path":    path,
-		"content": content,
+	args := filesystem.WriteFileArgs{
+		Path:    path,
+		Content: content,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "write_file",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -308,7 +313,7 @@ func (c client) callEditFile() bool {
 	}
 
 	editsStr := strings.Split(input, ",")
-	var edits []any
+	var edits []filesystem.EditOperation
 	for _, edit := range editsStr {
 		edit = strings.TrimSpace(edit)
 		if edit == "" {
@@ -329,22 +334,23 @@ func (c client) callEditFile() bool {
 			continue
 		}
 
-		edits = append(edits, map[string]any{
-			"oldText": oldText,
-			"newText": newText,
+		edits = append(edits, filesystem.EditOperation{
+			OldText: oldText,
+			NewText: newText,
 		})
 	}
 
-	args := map[string]any{
-		"path":  path,
-		"edits": edits,
+	args := filesystem.EditFileArgs{
+		Path:  path,
+		Edits: edits,
 		// Because the server doesn't support diff yet, dryRun is not supported yet.
-		"dryRun": false,
+		DryRun: false,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "edit_file",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -374,13 +380,14 @@ func (c client) callCreateDirectory() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"path": input,
+	args := filesystem.CreateDirectoryArgs{
+		Path: input,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "create_directory",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -410,13 +417,14 @@ func (c *client) callListDirectory() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"path": input,
+	args := filesystem.ListDirectoryArgs{
+		Path: input,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "list_directory",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -448,13 +456,14 @@ func (c client) callDirectoryTree() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"path": input,
+	args := filesystem.DirectoryTreeArgs{
+		Path: input,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "directory_tree",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -499,14 +508,15 @@ func (c client) callMoveFile() bool {
 	}
 	destination := input
 
-	args := map[string]any{
-		"source":      path,
-		"destination": destination,
+	args := filesystem.MoveFileArgs{
+		Source:      path,
+		Destination: destination,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "move_file",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -559,15 +569,16 @@ func (c client) callSearchFiles() bool {
 		excludePatterns = append(excludePatterns, excludePattern)
 	}
 
-	args := map[string]any{
-		"path":            pattern,
-		"pattern":         pattern,
-		"excludePatterns": excludePatterns,
+	args := filesystem.SearchFilesArgs{
+		Path:    pattern,
+		Pattern: pattern,
+		Exclude: excludePatterns,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "search_files",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {
@@ -599,13 +610,14 @@ func (c client) callGetFileInfo() bool {
 		return false
 	}
 
-	args := map[string]any{
-		"path": input,
+	args := filesystem.GetFileInfoArgs{
+		Path: input,
 	}
+	argsBs, _ := json.Marshal(args)
 
 	params := mcp.CallToolParams{
 		Name:      "get_file_info",
-		Arguments: args,
+		Arguments: argsBs,
 	}
 	result, err := c.cli.CallTool(c.ctx, params)
 	if err != nil {

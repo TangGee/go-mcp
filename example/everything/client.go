@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/MegaGrindStone/go-mcp"
+	"github.com/MegaGrindStone/go-mcp/servers/everything"
 	"github.com/google/uuid"
 )
 
@@ -65,7 +67,7 @@ func newClient() *client {
 func (c *client) CreateSampleMessage(_ context.Context, params mcp.SamplingParams) (mcp.SamplingResult, error) {
 	userPrompt := params.Messages[0].Content.Text
 	return mcp.SamplingResult{
-		Role: mcp.PromptRoleAssistant,
+		Role: mcp.RoleAssistant,
 		Content: mcp.SamplingContent{
 			Type: mcp.ContentTypeText,
 			Text: fmt.Sprintf("This is a sample message from external LLM for prompt \"%s\" with max tokens %d",
@@ -86,7 +88,16 @@ func (c *client) OnProgress(params mcp.ProgressParams) {
 }
 
 func (c *client) OnLog(params mcp.LogParams) {
-	l := fmt.Sprintf("%s: Level %d: %s", time.Now().Format(time.RFC3339), params.Level, params.Data.Message)
+	type logData struct {
+		Message string `json:"message"`
+	}
+	var data logData
+	if err := json.Unmarshal(params.Data, &data); err != nil {
+		fmt.Printf("failed to unmarshal log data: %v\n", err)
+		return
+	}
+
+	l := fmt.Sprintf("%s: Level %d: %s", time.Now().Format(time.RFC3339), params.Level, data.Message)
 	c.logs = append(c.logs, l)
 }
 
@@ -554,11 +565,14 @@ func (c *client) toolEchoParams() (mcp.CallToolParams, bool) {
 			continue
 		}
 
+		args := everything.EchoArgs{
+			Message: input,
+		}
+		argsBs, _ := json.Marshal(args)
+
 		return mcp.CallToolParams{
-			Name: "echo",
-			Arguments: map[string]any{
-				"message": input,
-			},
+			Name:      "echo",
+			Arguments: argsBs,
 		}, false
 	}
 }
@@ -593,12 +607,15 @@ func (c *client) toolAddParams() (mcp.CallToolParams, bool) {
 			continue
 		}
 
+		args := everything.AddArgs{
+			A: a,
+			B: b,
+		}
+		argsBs, _ := json.Marshal(args)
+
 		return mcp.CallToolParams{
-			Name: "add",
-			Arguments: map[string]any{
-				"a": a,
-				"b": b,
-			},
+			Name:      "add",
+			Arguments: argsBs,
 		}, false
 	}
 }
@@ -634,12 +651,15 @@ func (c *client) toolLongRunningOperationParams() (mcp.CallToolParams, bool) {
 			continue
 		}
 
+		args := everything.LongRunningOperationArgs{
+			Duration: duration,
+			Steps:    steps,
+		}
+		argsBs, _ := json.Marshal(args)
+
 		return mcp.CallToolParams{
-			Name: "longRunningOperation",
-			Arguments: map[string]any{
-				"duration": duration,
-				"steps":    steps,
-			},
+			Name:      "longRunningOperation",
+			Arguments: argsBs,
 			Meta: mcp.ParamsMeta{
 				ProgressToken: mcp.MustString(uuid.New().String()),
 			},
@@ -679,12 +699,15 @@ func (c *client) toolSampleLLMParams() (mcp.CallToolParams, bool) {
 			continue
 		}
 
+		args := everything.SampleLLMArgs{
+			Prompt:    prompt,
+			MaxTokens: maxTokens,
+		}
+		argsBs, _ := json.Marshal(args)
+
 		return mcp.CallToolParams{
-			Name: "sampleLLM",
-			Arguments: map[string]any{
-				"prompt":    prompt,
-				"maxTokens": maxTokens,
-			},
+			Name:      "sampleLLM",
+			Arguments: argsBs,
 		}, false
 	}
 }

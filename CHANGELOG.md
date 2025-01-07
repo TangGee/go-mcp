@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Introduce `Annotations` struct for metadata management
+- Add `ResourceContents` struct for unified text and blob handling
+- Implement `UnsubscribeResource` function in subscription handler
+- Add `WithInstructions` server option for client guidance
+- Implement `String` method for `LogLevel` type
+
+### Changed
+- Rename `PromptRole` to `Role` for better clarity
+- Enhance `Content` structure with new `Annotations` and `ResourceContent` fields
+- Update resource handling to use `ResourceContent` for embedded resources
+- Add pagination support with `Cursor` and `NextCursor` fields in template operations
+- Add `Total` field to completion results for progress tracking
+- Implement `Annotations` support across `Resource` and `ResourceTemplate` types
+- Update `LogData` to use `json.RawMessage` for flexible data handling
+- Change `InputSchema` field in `Tool` struct to use `json.RawMessage` type, removing dependency on validation library
+- Change `Arguments` field in `CallToolParams` struct to use `json.RawMessage` for flexible argument handling
+- Adjust `filesystem` server for current schema.
+- Adjust `everything` server for current schema.
+
+### Removed
+- Remove `Text` and `Blob` fields from `Resource` type (functionality moved to `ResourceContent`)
+
 ## [0.3.0] - 2025-01-05
 
 This release introduces significant improvements in API consistency and modernizes the codebase by adopting Go 1.23's iterator pattern. Key changes include restructured parameter naming conventions, simplified package organization, enhanced transport interfaces, and improved SSE handling through the integration of `go-sse` library. The adoption of iterators for handling sessions, messages, and streaming operations provides a more efficient and safer alternative to channels for sequential data processing.
