@@ -18,8 +18,10 @@ var resourceCompletions = map[string][]string{
 	"resourceId": {"1", "2", "3", "4", "5"},
 }
 
-func genResources() []mcp.Resource {
+func genResources() ([]mcp.Resource, map[string]mcp.ResourceContents) {
 	var resources []mcp.Resource
+	contents := make(map[string]mcp.ResourceContents)
+
 	for i := 0; i < 100; i++ {
 		uri := fmt.Sprintf("test://static/resource/%d", i+1)
 		name := fmt.Sprintf("Resource %d", i+1)
@@ -28,8 +30,12 @@ func genResources() []mcp.Resource {
 				URI:      uri,
 				Name:     name,
 				MimeType: "text/plain",
-				Text:     fmt.Sprintf("Resource %d: This is a plain text resource", i+1),
 			})
+			contents[uri] = mcp.ResourceContents{
+				URI:      uri,
+				MimeType: "text/plain",
+				Text:     fmt.Sprintf("Resource %d: This is a plain text resource", i+1),
+			}
 		} else {
 			content := fmt.Sprintf("Resource %d: This is a base64 blob", i+1)
 			c64 := base64.StdEncoding.EncodeToString([]byte(content))
@@ -37,12 +43,16 @@ func genResources() []mcp.Resource {
 				URI:      uri,
 				Name:     name,
 				MimeType: "application/octet-stream",
-				Blob:     c64,
 			})
+			contents[uri] = mcp.ResourceContents{
+				URI:      uri,
+				MimeType: "application/octet-stream",
+				Blob:     c64,
+			}
 		}
 	}
 
-	return resources
+	return resources, contents
 }
 
 // ListResources implements mcp.ResourceServer interface.
@@ -59,13 +69,14 @@ func (s *Server) ListResources(
 		startIndex, _ = strconv.Atoi(params.Cursor)
 	}
 	endIndex := startIndex + pageSize
-	if endIndex > len(genResources()) {
-		endIndex = len(genResources())
+	rs, _ := genResources()
+	if endIndex > len(rs) {
+		endIndex = len(rs)
 	}
-	resources := genResources()[startIndex:endIndex]
+	resources := rs[startIndex:endIndex]
 
 	nextCursor := ""
-	if endIndex < len(genResources()) {
+	if endIndex < len(rs) {
 		nextCursor = fmt.Sprintf("%d", endIndex)
 	}
 
@@ -87,19 +98,16 @@ func (s *Server) ReadResource(
 	if !strings.HasPrefix(params.URI, "test://static/resource/") {
 		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
 	}
-	arrStr := strings.Split(params.URI, "/")
-	if len(arrStr) < 2 {
+
+	_, cs := genResources()
+
+	resource, ok := cs[params.URI]
+	if !ok {
 		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
 	}
 
-	index, _ := strconv.Atoi(arrStr[len(arrStr)-1])
-	if index < 0 || index >= len(genResources()) {
-		return mcp.ReadResourceResult{}, fmt.Errorf("resource not found")
-	}
-
-	resource := genResources()[index]
 	return mcp.ReadResourceResult{
-		Contents: []mcp.Resource{resource},
+		Contents: []mcp.ResourceContents{resource},
 	}, nil
 }
 
@@ -146,7 +154,8 @@ func (s *Server) CompletesResourceTemplate(
 	return mcp.CompletionResult{
 		Completion: struct {
 			Values  []string `json:"values"`
-			HasMore bool     `json:"hasMore"`
+			HasMore bool     `json:"hasMore,omitempty"`
+			Total   int      `json:"total,omitempty"`
 		}{
 			Values:  values,
 			HasMore: false,
@@ -159,6 +168,13 @@ func (s *Server) SubscribeResource(params mcp.SubscribeResourceParams) {
 	s.log(fmt.Sprintf("SubscribeResource: %s", params.URI), mcp.LogLevelDebug)
 
 	s.resourceSubscribers.Store(params.URI, struct{}{})
+}
+
+// UnsubscribeResource implements mcp.ResourceSubscriptionHandler interface.
+func (s *Server) UnsubscribeResource(params mcp.UnsubscribeResourceParams) {
+	s.log(fmt.Sprintf("UnsubscribeResource: %s", params.URI), mcp.LogLevelDebug)
+
+	s.resourceSubscribers.Delete(params.URI)
 }
 
 // SubscribedResourceUpdates implements mcp.ResourceSubscriptionHandler interface.

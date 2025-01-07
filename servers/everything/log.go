@@ -1,6 +1,7 @@
 package everything
 
 import (
+	"encoding/json"
 	"iter"
 
 	"github.com/MegaGrindStone/go-mcp"
@@ -33,13 +34,19 @@ func (s *Server) log(msg string, level mcp.LogLevel) {
 		return
 	}
 
+	type logData struct {
+		Message string `json:"message"`
+	}
+	data := logData{
+		Message: msg,
+	}
+	dataBs, _ := json.Marshal(data)
+
 	select {
 	case s.logs <- mcp.LogParams{
 		Level:  level,
 		Logger: "everything",
-		Data: mcp.LogData{
-			Message: msg,
-		},
+		Data:   dataBs,
 	}:
 	case <-s.done:
 		return
