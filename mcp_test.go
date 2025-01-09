@@ -565,6 +565,84 @@ func TestLog(t *testing.T) {
 	}
 }
 
+func TestUninitializedClient(t *testing.T) {
+	// Create a client without connecting it
+	client := mcp.NewClient(mcp.Info{
+		Name:    "test-client",
+		Version: "1.0",
+	}, nil, mcp.ServerRequirement{})
+
+	t.Run("ListPrompts", func(t *testing.T) {
+		_, err := client.ListPrompts(context.Background(), mcp.ListPromptsParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("GetPrompt", func(t *testing.T) {
+		_, err := client.GetPrompt(context.Background(), mcp.GetPromptParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("CompletesPrompt", func(t *testing.T) {
+		_, err := client.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListResources", func(t *testing.T) {
+		_, err := client.ListResources(context.Background(), mcp.ListResourcesParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ReadResource", func(t *testing.T) {
+		_, err := client.ReadResource(context.Background(), mcp.ReadResourceParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListResourceTemplates", func(t *testing.T) {
+		_, err := client.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("SubscribeResource", func(t *testing.T) {
+		err := client.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListTools", func(t *testing.T) {
+		_, err := client.ListTools(context.Background(), mcp.ListToolsParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("CallTool", func(t *testing.T) {
+		_, err := client.CallTool(context.Background(), mcp.CallToolParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("SetLogLevel", func(t *testing.T) {
+		err := client.SetLogLevel(mcp.LogLevelDebug)
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+}
+
 func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
 	return func(t *testing.T) {
 		s := &testSuite{
