@@ -15,13 +15,6 @@ import (
 // ClientOption is a function that configures a client.
 type ClientOption func(*Client)
 
-// ServerRequirement is a struct that specifies which server capabilities are required.
-type ServerRequirement struct {
-	PromptServer   bool
-	ResourceServer bool
-	ToolServer     bool
-}
-
 // Client implements a Model Context Protocol (MCP) client that enables communication
 // between LLM applications and external data sources and tools. It manages the
 // connection lifecycle, handles protocol messages, and provides access to MCP
@@ -35,10 +28,10 @@ type ServerRequirement struct {
 // before any operations can be performed. The client should be properly closed
 // using Close() when it's no longer needed.
 type Client struct {
-	capabilities               ClientCapabilities
-	info                       Info
-	requiredServerCapabilities ServerCapabilities
-	transport                  ClientTransport
+	capabilities       ClientCapabilities
+	info               Info
+	serverCapabilities ServerCapabilities
+	transport          ClientTransport
 
 	rootsListHandler RootsListHandler
 	rootsListUpdater RootsListUpdater
@@ -175,7 +168,6 @@ func WithClientPingInterval(interval time.Duration) ClientOption {
 func NewClient(
 	info Info,
 	transport ClientTransport,
-	serverRequirement ServerRequirement,
 	options ...ClientOption,
 ) *Client {
 	c := &Client{
@@ -211,45 +203,6 @@ func NewClient(
 	}
 	if c.samplingHandler != nil {
 		c.capabilities.Sampling = &SamplingCapability{}
-	}
-
-	c.requiredServerCapabilities = ServerCapabilities{}
-
-	if serverRequirement.PromptServer {
-		c.requiredServerCapabilities.Prompts = &PromptsCapability{}
-		if c.promptListWatcher != nil {
-			c.requiredServerCapabilities.Prompts = &PromptsCapability{
-				ListChanged: true,
-			}
-		}
-	}
-
-	if serverRequirement.ResourceServer {
-		rlc := false
-		rsc := false
-		if c.resourceListWatcher != nil {
-			rlc = true
-		}
-		if c.resourceSubscribedWatcher != nil {
-			rsc = true
-		}
-		c.requiredServerCapabilities.Resources = &ResourcesCapability{
-			ListChanged: rlc,
-			Subscribe:   rsc,
-		}
-	}
-
-	if serverRequirement.ToolServer {
-		c.requiredServerCapabilities.Tools = &ToolsCapability{}
-		if c.toolListWatcher != nil {
-			c.requiredServerCapabilities.Tools = &ToolsCapability{
-				ListChanged: true,
-			}
-		}
-	}
-
-	if c.logReceiver != nil {
-		c.requiredServerCapabilities.Logging = &LoggingCapability{}
 	}
 
 	return c
@@ -294,6 +247,9 @@ func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (Lis
 	if !c.initialized {
 		return ListPromptResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Prompts == nil {
+		return ListPromptResult{}, errors.New("prompts not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -331,6 +287,9 @@ func (c *Client) ListPrompts(ctx context.Context, params ListPromptsParams) (Lis
 func (c *Client) GetPrompt(ctx context.Context, params GetPromptParams) (GetPromptResult, error) {
 	if !c.initialized {
 		return GetPromptResult{}, errors.New("client not initialized")
+	}
+	if c.serverCapabilities.Prompts == nil {
+		return GetPromptResult{}, errors.New("prompts not supported by server")
 	}
 
 	paramsBs, err := json.Marshal(params)
@@ -370,6 +329,9 @@ func (c *Client) CompletesPrompt(ctx context.Context, params CompletesCompletion
 	if !c.initialized {
 		return CompletionResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Prompts == nil {
+		return CompletionResult{}, errors.New("prompts not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -408,6 +370,9 @@ func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) 
 	if !c.initialized {
 		return ListResourcesResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Resources == nil {
+		return ListResourcesResult{}, errors.New("resources not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -445,6 +410,9 @@ func (c *Client) ListResources(ctx context.Context, params ListResourcesParams) 
 func (c *Client) ReadResource(ctx context.Context, params ReadResourceParams) (ReadResourceResult, error) {
 	if !c.initialized {
 		return ReadResourceResult{}, errors.New("client not initialized")
+	}
+	if c.serverCapabilities.Resources == nil {
+		return ReadResourceResult{}, errors.New("resources not supported by server")
 	}
 
 	paramsBs, err := json.Marshal(params)
@@ -487,6 +455,9 @@ func (c *Client) ListResourceTemplates(
 	if !c.initialized {
 		return ListResourceTemplatesResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Resources == nil {
+		return ListResourceTemplatesResult{}, errors.New("resources not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -528,6 +499,9 @@ func (c *Client) CompletesResourceTemplate(
 	if !c.initialized {
 		return CompletionResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Resources == nil {
+		return CompletionResult{}, errors.New("resources not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -563,6 +537,9 @@ func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResource
 	if !c.initialized {
 		return errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Resources == nil {
+		return errors.New("resources not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -595,6 +572,9 @@ func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResource
 func (c *Client) ListTools(ctx context.Context, params ListToolsParams) (ListToolsResult, error) {
 	if !c.initialized {
 		return ListToolsResult{}, errors.New("client not initialized")
+	}
+	if c.serverCapabilities.Tools == nil {
+		return ListToolsResult{}, errors.New("tools not supported by server")
 	}
 
 	paramsBs, err := json.Marshal(params)
@@ -634,6 +614,9 @@ func (c *Client) CallTool(ctx context.Context, params CallToolParams) (CallToolR
 	if !c.initialized {
 		return CallToolResult{}, errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Tools == nil {
+		return CallToolResult{}, errors.New("tools not supported by server")
+	}
 
 	paramsBs, err := json.Marshal(params)
 	if err != nil {
@@ -670,6 +653,9 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 	if !c.initialized {
 		return errors.New("client not initialized")
 	}
+	if c.serverCapabilities.Logging == nil {
+		return errors.New("logging not supported by server")
+	}
 
 	params := LogParams{
 		Level: level,
@@ -683,6 +669,26 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 		Method:  MethodLoggingSetLevel,
 		Params:  paramsBs,
 	})
+}
+
+// PromptServerSupported returns true if the server supports prompt management.
+func (c *Client) PromptServerSupported() bool {
+	return c.serverCapabilities.Prompts != nil
+}
+
+// ResourceServerSupported returns true if the server supports resource management.
+func (c *Client) ResourceServerSupported() bool {
+	return c.serverCapabilities.Resources != nil
+}
+
+// ToolServerSupported returns true if the server supports tool management.
+func (c *Client) ToolServerSupported() bool {
+	return c.serverCapabilities.Tools != nil
+}
+
+// LoggingServerSupported returns true if the server supports logging.
+func (c *Client) LoggingServerSupported() bool {
+	return c.serverCapabilities.Logging != nil
 }
 
 func (c *Client) start(ctx context.Context) {
@@ -882,18 +888,7 @@ func (c *Client) handleInitialize(ctx context.Context, msg JSONRPCMessage) error
 		return nErr
 	}
 
-	if err := c.checkCapabilities(result, c.requiredServerCapabilities); err != nil {
-		nErr := fmt.Errorf("failed to check capabilities: %w", err)
-		if err := c.sendError(context.Background(), msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInsufficientClientCapabilities,
-			Data:    map[string]any{"error": err},
-		}); err != nil {
-			nErr = fmt.Errorf("%w: failed to send error on initialize: %w", nErr, err)
-		}
-		return nErr
-	}
-
+	c.serverCapabilities = result.Capabilities
 	c.initialized = true
 
 	return c.sendNotification(context.Background(), methodNotificationsInitialized, nil)
@@ -934,65 +929,6 @@ func (c *Client) handleSamplingMessages(ctx context.Context, msg JSONRPCMessage)
 	if err := c.sendResult(ctx, msg.ID, result); err != nil {
 		c.logger.Error("failed to send result", "err", err)
 	}
-}
-
-func (c *Client) checkCapabilities(result initializeResult, requiredServerCap ServerCapabilities) error {
-	// We perform hierarchical capability checking:
-	// 1. Check if the main capability exists
-	// 2. Check if required sub-capabilities are supported
-	if requiredServerCap.Prompts != nil {
-		if result.Capabilities.Prompts == nil {
-			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'prompts'")
-			return nErr
-		}
-		if requiredServerCap.Prompts.ListChanged {
-			if !result.Capabilities.Prompts.ListChanged {
-				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'prompts.listChanged'")
-				return nErr
-			}
-		}
-	}
-
-	if requiredServerCap.Resources != nil {
-		if result.Capabilities.Resources == nil {
-			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources'")
-			return nErr
-		}
-		if requiredServerCap.Resources.ListChanged {
-			if !result.Capabilities.Resources.ListChanged {
-				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources.listChanged'")
-				return nErr
-			}
-		}
-		if requiredServerCap.Resources.Subscribe {
-			if !result.Capabilities.Resources.Subscribe {
-				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'resources.subscribe'")
-				return nErr
-			}
-		}
-	}
-
-	if requiredServerCap.Tools != nil {
-		if result.Capabilities.Tools == nil {
-			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'tools'")
-			return nErr
-		}
-		if requiredServerCap.Tools.ListChanged {
-			if !result.Capabilities.Tools.ListChanged {
-				nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'tools.listChanged'")
-				return nErr
-			}
-		}
-	}
-
-	if requiredServerCap.Logging != nil {
-		if result.Capabilities.Logging == nil {
-			nErr := fmt.Errorf("insufficient server capabilities: missing required capability 'logging'")
-			return nErr
-		}
-	}
-
-	return nil
 }
 
 func (c *Client) sendRequestWithoutResult(ctx context.Context, msg JSONRPCMessage) error {

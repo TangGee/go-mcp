@@ -30,18 +30,16 @@ type testSuiteConfig struct {
 	server        mcp.Server
 	serverOptions []mcp.ServerOption
 
-	clientOptions     []mcp.ClientOption
-	serverRequirement mcp.ServerRequirement
+	clientOptions []mcp.ClientOption
 }
 
 func TestInitialize(t *testing.T) {
 	type testCase struct {
-		name              string
-		server            mcp.Server
-		serverOptions     []mcp.ServerOption
-		clientOptions     []mcp.ClientOption
-		serverRequirement mcp.ServerRequirement
-		wantErr           bool
+		name          string
+		server        mcp.Server
+		serverOptions []mcp.ServerOption
+		clientOptions []mcp.ClientOption
+		wantErr       bool
 	}
 
 	testCases := []testCase{
@@ -50,12 +48,7 @@ func TestInitialize(t *testing.T) {
 			server:        &mockServer{},
 			serverOptions: []mcp.ServerOption{},
 			clientOptions: []mcp.ClientOption{},
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer:   false,
-				ResourceServer: false,
-				ToolServer:     false,
-			},
-			wantErr: false,
+			wantErr:       false,
 		},
 		{
 			name: "success with full capabilities",
@@ -84,11 +77,6 @@ func TestInitialize(t *testing.T) {
 				mcp.WithSamplingHandler(&mockSamplingHandler{}),
 				mcp.WithLogReceiver(&mockLogReceiver{}),
 			},
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer:   true,
-				ResourceServer: true,
-				ToolServer:     true,
-			},
 			wantErr: false,
 		},
 		{
@@ -100,36 +88,17 @@ func TestInitialize(t *testing.T) {
 				mcp.WithPromptServer(&mockPromptServer{}),
 			},
 			clientOptions: []mcp.ClientOption{},
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer: true,
-			},
-			wantErr: true,
-		},
-		{
-			name:   "fail insufficient server capabilities",
-			server: &mockServer{},
-			serverOptions: []mcp.ServerOption{
-				mcp.WithPromptServer(&mockPromptServer{}),
-				mcp.WithToolServer(&mockToolServer{}),
-				mcp.WithLogHandler(&mockLogHandler{}),
-				mcp.WithRootsListWatcher(&mockRootsListWatcher{}),
-			},
-			clientOptions: []mcp.ClientOption{},
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
-			},
-			wantErr: true,
+			wantErr:       true,
 		},
 	}
 
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		for _, tc := range testCases {
 			cfg := testSuiteConfig{
-				transportName:     transportName,
-				server:            tc.server,
-				serverOptions:     tc.serverOptions,
-				clientOptions:     tc.clientOptions,
-				serverRequirement: tc.serverRequirement,
+				transportName: transportName,
+				server:        tc.server,
+				serverOptions: tc.serverOptions,
+				clientOptions: tc.clientOptions,
 			}
 
 			t.Run(fmt.Sprintf("%s/%s", transportName, tc.name), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
@@ -148,6 +117,84 @@ func TestInitialize(t *testing.T) {
 	}
 }
 
+func TestUninitializedClient(t *testing.T) {
+	// Create a client without connecting it
+	client := mcp.NewClient(mcp.Info{
+		Name:    "test-client",
+		Version: "1.0",
+	}, nil)
+
+	t.Run("ListPrompts", func(t *testing.T) {
+		_, err := client.ListPrompts(context.Background(), mcp.ListPromptsParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("GetPrompt", func(t *testing.T) {
+		_, err := client.GetPrompt(context.Background(), mcp.GetPromptParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("CompletesPrompt", func(t *testing.T) {
+		_, err := client.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListResources", func(t *testing.T) {
+		_, err := client.ListResources(context.Background(), mcp.ListResourcesParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ReadResource", func(t *testing.T) {
+		_, err := client.ReadResource(context.Background(), mcp.ReadResourceParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListResourceTemplates", func(t *testing.T) {
+		_, err := client.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("SubscribeResource", func(t *testing.T) {
+		err := client.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("ListTools", func(t *testing.T) {
+		_, err := client.ListTools(context.Background(), mcp.ListToolsParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("CallTool", func(t *testing.T) {
+		_, err := client.CallTool(context.Background(), mcp.CallToolParams{})
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+
+	t.Run("SetLogLevel", func(t *testing.T) {
+		err := client.SetLogLevel(mcp.LogLevelDebug)
+		if err == nil || err.Error() != "client not initialized" {
+			t.Errorf("expected 'client not initialized' error, got %v", err)
+		}
+	})
+}
+
 func TestPrompt(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		promptServer := mockPromptServer{}
@@ -161,9 +208,6 @@ func TestPrompt(t *testing.T) {
 			},
 			clientOptions: []mcp.ClientOption{
 				mcp.WithProgressListener(&progressListener),
-			},
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer: true,
 			},
 		}
 
@@ -259,9 +303,6 @@ func TestResource(t *testing.T) {
 			server:        &mockServer{},
 			serverOptions: []mcp.ServerOption{
 				mcp.WithResourceServer(&resourceServer),
-			},
-			serverRequirement: mcp.ServerRequirement{
-				ResourceServer: true,
 			},
 		}
 
@@ -424,9 +465,6 @@ func TestTool(t *testing.T) {
 				mcp.WithRootsListHandler(&rootsListHandler),
 				mcp.WithSamplingHandler(&samplingHandler),
 			},
-			serverRequirement: mcp.ServerRequirement{
-				ToolServer: true,
-			},
 		}
 
 		t.Run(fmt.Sprintf("%s/ListTools", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
@@ -491,7 +529,6 @@ func TestRoot(t *testing.T) {
 			clientOptions: []mcp.ClientOption{
 				mcp.WithRootsListUpdater(rootsListUpdater),
 			},
-			serverRequirement: mcp.ServerRequirement{},
 		}
 
 		t.Run(fmt.Sprintf("%s/UpdateRootList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
@@ -526,11 +563,6 @@ func TestLog(t *testing.T) {
 			clientOptions: []mcp.ClientOption{
 				mcp.WithLogReceiver(receiver),
 			},
-			serverRequirement: mcp.ServerRequirement{
-				PromptServer:   false,
-				ResourceServer: false,
-				ToolServer:     false,
-			},
 		}
 
 		t.Run(fmt.Sprintf("%s/LogStream", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
@@ -563,84 +595,6 @@ func TestLog(t *testing.T) {
 			}
 		}))
 	}
-}
-
-func TestUninitializedClient(t *testing.T) {
-	// Create a client without connecting it
-	client := mcp.NewClient(mcp.Info{
-		Name:    "test-client",
-		Version: "1.0",
-	}, nil, mcp.ServerRequirement{})
-
-	t.Run("ListPrompts", func(t *testing.T) {
-		_, err := client.ListPrompts(context.Background(), mcp.ListPromptsParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("GetPrompt", func(t *testing.T) {
-		_, err := client.GetPrompt(context.Background(), mcp.GetPromptParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("CompletesPrompt", func(t *testing.T) {
-		_, err := client.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("ListResources", func(t *testing.T) {
-		_, err := client.ListResources(context.Background(), mcp.ListResourcesParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("ReadResource", func(t *testing.T) {
-		_, err := client.ReadResource(context.Background(), mcp.ReadResourceParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("ListResourceTemplates", func(t *testing.T) {
-		_, err := client.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("SubscribeResource", func(t *testing.T) {
-		err := client.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("ListTools", func(t *testing.T) {
-		_, err := client.ListTools(context.Background(), mcp.ListToolsParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("CallTool", func(t *testing.T) {
-		_, err := client.CallTool(context.Background(), mcp.CallToolParams{})
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
-
-	t.Run("SetLogLevel", func(t *testing.T) {
-		err := client.SetLogLevel(mcp.LogLevelDebug)
-		if err == nil || err.Error() != "client not initialized" {
-			t.Errorf("expected 'client not initialized' error, got %v", err)
-		}
-	})
 }
 
 func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
@@ -698,7 +652,7 @@ func (t *testSuite) setup() {
 	t.mcpClient = mcp.NewClient(mcp.Info{
 		Name:    "test-client",
 		Version: "1.0",
-	}, t.clientTransport, t.cfg.serverRequirement, t.cfg.clientOptions...)
+	}, t.clientTransport, t.cfg.clientOptions...)
 
 	ready := make(chan struct{})
 	errs := make(chan error)
