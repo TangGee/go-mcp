@@ -49,11 +49,7 @@ func newClient() *client {
 	c.cli = mcp.NewClient(mcp.Info{
 		Name:    "everything-client",
 		Version: "1.0",
-	}, sse, mcp.ServerRequirement{
-		PromptServer:   true,
-		ResourceServer: true,
-		ToolServer:     true,
-	},
+	}, sse,
 		mcp.WithClientPingInterval(30*time.Second),
 		mcp.WithSamplingHandler(&c),
 		mcp.WithResourceSubscribedWatcher(&c),

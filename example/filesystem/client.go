@@ -32,9 +32,7 @@ func newClient(transport mcp.ClientTransport) client {
 	cli := mcp.NewClient(mcp.Info{
 		Name:    "fileserver-client",
 		Version: "1.0",
-	}, transport, mcp.ServerRequirement{
-		ToolServer: true,
-	})
+	}, transport)
 
 	return client{
 		cli:       cli,
