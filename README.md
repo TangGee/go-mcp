@@ -79,7 +79,7 @@ func (MyMCPServer) RequireSamplingClient() bool {
 ##### Server-Sent Events (SSE)
 ```go
 sseSrv := mcp.NewSSEServer()
-go mcp.Serve(ctx, MyMCPServer{}, sseSrv, errsChan)
+go mcp.Serve(ctx, MyMCPServer{}, sseSrv)
 
 // Set up HTTP handlers
 http.HandleFunc("/sse", sseSrv.HandleSSE())
@@ -90,13 +90,10 @@ http.ListenAndServe(":8080", nil)
 ##### Standard IO
 ```go
 stdIOSrv := mcp.NewStdIO(os.Stdin, os.Stdout)
-go mcp.Serve(ctx, MyMCPServer{}, stdIOSrv, errsChan)
-stdIOSrv.Start()
+go mcp.Serve(ctx, MyMCPServer{}, stdIOSrv)
 ```
 
 ### Client Implementation
-
-#### 1. Basic Client Setup
 
 ```go
 // Create client info
@@ -105,43 +102,26 @@ info := mcp.Info{
     Version: "1.0",
 }
 
-// Define server requirements
-srvReq := mcp.ServerRequirement{
-    ToolServer: true,
-}
+// Choose transport layer - SSE or Standard IO
+// Option 1: Server-Sent Events (SSE)
+sseClient := mcp.NewSSEClient("http://localhost:8080/sse", http.DefaultClient)
+cli := mcp.NewClient(info, sseClient)
 
-// Create and connect client
-cli := mcp.NewClient(info, transport, srvReq)
+// Option 2: Standard IO
+srvReader, srvWriter := io.Pipe()
+cliReader, cliWriter := io.Pipe()
+cliIO := mcp.NewStdIO(cliReader, srvWriter)
+srvIO := mcp.NewStdIO(srvReader, cliWriter)
+cli := mcp.NewClient(info, cliIO)
+
+// Connect client
 if err := cli.Connect(); err != nil {
     log.Fatal(err)
 }
 defer cli.Close()
 ```
 
-#### 2. Choose Transport Layer
-
-##### Server-Sent Events (SSE)
-```go
-sseClient := mcp.NewSSEClient("http://localhost:8080/sse", http.DefaultClient)
-cli := mcp.NewClient(info, sseClient, srvReq)
-```
-
-##### Standard IO
-```go
-// Using pipes for in-process communication
-srvReader, srvWriter := io.Pipe()
-cliReader, cliWriter := io.Pipe()
-
-cliIO := mcp.NewStdIO(cliReader, srvWriter)
-srvIO := mcp.NewStdIO(srvReader, cliWriter)
-
-go srvIO.Start()
-go cliIO.Start()
-
-cli := mcp.NewClient(info, cliIO, srvReq)
-```
-
-#### 3. Making Requests
+#### Making Requests
 
 ```go
 // List available tools
