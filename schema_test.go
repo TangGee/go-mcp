@@ -126,3 +126,65 @@ func TestMustString_RoundTrip(t *testing.T) {
 		t.Errorf("Round trip failed: got %v, want %v", unmarshaled, original)
 	}
 }
+
+func TestLogLevel_String(t *testing.T) {
+	tests := []struct {
+		name     string
+		level    mcp.LogLevel
+		expected string
+	}{
+		{
+			name:     "Debug level",
+			level:    mcp.LogLevelDebug,
+			expected: "debug",
+		},
+		{
+			name:     "Info level",
+			level:    mcp.LogLevelInfo,
+			expected: "info",
+		},
+		{
+			name:     "Notice level",
+			level:    mcp.LogLevelNotice,
+			expected: "notice",
+		},
+		{
+			name:     "Warning level",
+			level:    mcp.LogLevelWarning,
+			expected: "warning",
+		},
+		{
+			name:     "Error level",
+			level:    mcp.LogLevelError,
+			expected: "error",
+		},
+		{
+			name:     "Critical level",
+			level:    mcp.LogLevelCritical,
+			expected: "critical",
+		},
+		{
+			name:     "Alert level",
+			level:    mcp.LogLevelAlert,
+			expected: "alert",
+		},
+		{
+			name:     "Emergency level",
+			level:    mcp.LogLevelEmergency,
+			expected: "emergency",
+		},
+		{
+			name:     "Unknown level",
+			level:    mcp.LogLevel(999),
+			expected: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.level.String(); got != tt.expected {
+				t.Errorf("LogLevel.String() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
