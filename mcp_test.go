@@ -203,13 +203,41 @@ func TestPrompt(t *testing.T) {
 		cfg := testSuiteConfig{
 			transportName: transportName,
 			server:        &mockServer{},
-			serverOptions: []mcp.ServerOption{
-				mcp.WithPromptServer(&promptServer),
-			},
 			clientOptions: []mcp.ClientOption{
 				mcp.WithProgressListener(&progressListener),
 			},
 		}
+
+		t.Run(fmt.Sprintf("%s/UnsupportedPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListPrompts(context.Background(), mcp.ListPromptsParams{
+				Cursor: "cursor",
+				Meta: mcp.ParamsMeta{
+					ProgressToken: "progressToken",
+				},
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.GetPrompt(context.Background(), mcp.GetPromptParams{
+				Name: "test-prompt",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
+				Ref: mcp.CompletionRef{
+					Type: mcp.CompletionRefPrompt,
+					Name: "test-prompt",
+				},
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+		}))
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithPromptServer(&promptServer))
 
 		t.Run(fmt.Sprintf("%s/ListPrompts", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			_, err := s.mcpClient.ListPrompts(context.Background(), mcp.ListPromptsParams{
@@ -292,6 +320,7 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
+//nolint:gocognit
 func TestResource(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		resourceServer := mockResourceServer{
@@ -301,10 +330,58 @@ func TestResource(t *testing.T) {
 		cfg := testSuiteConfig{
 			transportName: transportName,
 			server:        &mockServer{},
-			serverOptions: []mcp.ServerOption{
-				mcp.WithResourceServer(&resourceServer),
-			},
 		}
+
+		t.Run(fmt.Sprintf("%s/UnsupportedResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListResources(context.Background(), mcp.ListResourcesParams{
+				Cursor: "cursor",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.ReadResource(context.Background(), mcp.ReadResourceParams{
+				URI: "test://resource",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
+				Meta: mcp.ParamsMeta{
+					ProgressToken: "progressToken",
+				},
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
+				Ref: mcp.CompletionRef{
+					Type: mcp.CompletionRefResource,
+					Name: "test-resource",
+				},
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			err = s.mcpClient.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
+				URI: "test://resource",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			err = s.mcpClient.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
+				URI: "test://resource",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+		}))
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceServer(&resourceServer))
 
 		t.Run(fmt.Sprintf("%s/ListResourcesCancelled", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -418,6 +495,18 @@ func TestResource(t *testing.T) {
 			if resourceSubscriptionWatcher.updateCount != 5 {
 				t.Errorf("expected 5 resource subscribed, got %d", resourceSubscriptionWatcher.updateCount)
 			}
+
+			err = s.mcpClient.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
+				URI: "test://resource",
+			})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+
+			if resourceSubscriptionHandler.unsubscribeParams.URI != "test://resource" {
+				t.Errorf("expected URI test://resource, got %s", resourceSubscriptionHandler.unsubscribeParams.URI)
+			}
 		}))
 
 		resourceListUpdater := mockResourceListUpdater{
@@ -458,14 +547,29 @@ func TestTool(t *testing.T) {
 				requireRootsListClient: true,
 				requireSamplingClient:  true,
 			},
-			serverOptions: []mcp.ServerOption{
-				mcp.WithToolServer(&toolServer),
-			},
 			clientOptions: []mcp.ClientOption{
 				mcp.WithRootsListHandler(&rootsListHandler),
 				mcp.WithSamplingHandler(&samplingHandler),
 			},
 		}
+
+		t.Run(fmt.Sprintf("%s/UnsupportedTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			_, err := s.mcpClient.ListTools(context.Background(), mcp.ListToolsParams{
+				Cursor: "cursor",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+
+			_, err = s.mcpClient.CallTool(context.Background(), mcp.CallToolParams{
+				Name: "test-tool",
+			})
+			if err == nil {
+				t.Errorf("expected error, got nil")
+			}
+		}))
+
+		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/ListTools", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			_, err := s.mcpClient.ListTools(context.Background(), mcp.ListToolsParams{

@@ -476,6 +476,8 @@ const (
 	MethodResourcesTemplatesList = "resources/templates/list"
 	// MethodResourcesSubscribe is the method name for subscribing to resource updates.
 	MethodResourcesSubscribe = "resources/subscribe"
+	// MethodResourcesUnsubscribe is the method name for unsubscribing from resource updates.
+	MethodResourcesUnsubscribe = "resources/unsubscribe"
 
 	// MethodToolsList is the method name for retrieving a list of available tools.
 	MethodToolsList = "tools/list"

@@ -561,6 +561,35 @@ func (c *Client) SubscribeResource(ctx context.Context, params SubscribeResource
 	return nil
 }
 
+// UnsubscribeResource unregisters the client for notifications about changes to a specific resource.
+func (c *Client) UnsubscribeResource(ctx context.Context, params UnsubscribeResourceParams) error {
+	if !c.initialized {
+		return errors.New("client not initialized")
+	}
+	if c.serverCapabilities.Resources == nil {
+		return errors.New("resources not supported by server")
+	}
+
+	paramsBs, err := json.Marshal(params)
+	if err != nil {
+		return fmt.Errorf("failed to marshal params: %w", err)
+	}
+	res, err := c.sendRequest(ctx, JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodResourcesUnsubscribe,
+		Params:  paramsBs,
+	})
+	if err != nil {
+		return err
+	}
+
+	if res.Error != nil {
+		return fmt.Errorf("result error: %w", res.Error)
+	}
+
+	return nil
+}
+
 // ListTools retrieves a paginated list of available tools from the server.
 // It returns a ListToolsResult containing tool metadata and pagination information.
 //

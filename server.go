@@ -474,6 +474,8 @@ func (s server) listenMessages(sessID string, msgs iter.Seq[JSONRPCMessage]) {
 			go s.handleListResourceTemplates(sessID, msg)
 		case MethodResourcesSubscribe:
 			go s.handleSubscribeResource(sessID, msg)
+		case MethodResourcesUnsubscribe:
+			go s.handleUnsubscribeResource(sessID, msg)
 		case MethodToolsList:
 			go s.handleListTools(sessID, msg)
 		case MethodToolsCall:
@@ -765,6 +767,26 @@ func (s server) handleSubscribeResource(sessID string, msg JSONRPCMessage) {
 	}
 
 	s.resourceSubscriptionHandler.SubscribeResource(params)
+
+	s.sendResult(sessID, msg.ID, nil)
+}
+
+func (s server) handleUnsubscribeResource(sessID string, msg JSONRPCMessage) {
+	if s.resourceSubscriptionHandler == nil || !s.initialized {
+		return
+	}
+
+	var params UnsubscribeResourceParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		s.sendError(sessID, msg.ID, JSONRPCError{
+			Code:    jsonRPCInvalidParamsCode,
+			Message: errMsgInvalidJSON,
+			Data:    map[string]any{"error": err},
+		})
+		return
+	}
+
+	s.resourceSubscriptionHandler.UnsubscribeResource(params)
 
 	s.sendResult(sessID, msg.ID, nil)
 }
