@@ -283,7 +283,7 @@ type Content struct {
 	// For ContentTypeText
 	Text string `json:"text,omitempty"`
 
-	// For ContentTypeImage
+	// For ContentTypeImage or ContentTypeAudio
 	Data     string `json:"data,omitempty"`
 	MimeType string `json:"mimeType,omitempty"`
 
@@ -444,6 +444,7 @@ const (
 const (
 	ContentTypeText     ContentType = "text"
 	ContentTypeImage    ContentType = "image"
+	ContentTypeAudio    ContentType = "audio"
 	ContentTypeResource ContentType = "resource"
 )
 
