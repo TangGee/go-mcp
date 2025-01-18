@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-01-19
+
+This release implements audio content support as specified in the latest MCP specification update, adding necessary enum values and maintaining consistency with existing content type structures. The changes enable seamless integration of audio processing capabilities while preserving compatibility with existing image content handling patterns.
+
+### Added
+
+- `ContentTypeAudio` to `ContentType` enum.
+
 ## [0.4.0] - 2025-01-10
 
 This release changes how clients handle server capabilities during initialization. Instead of requiring users to define server capabilities when creating a client, which proved impractical in real-world usage where MCP hosts often lack compile-time knowledge of server capabilities, the client can now connect to any server and dynamically check for desired capabilities. This is implemented through new methods like `PromptServerSupported` and `ResourceServerSupported`, allowing runtime verification of specific server features.
