@@ -230,6 +230,8 @@ func (c *client) runPrompts() bool {
 			fmt.Printf("Truncated image data: %s...\n", data)
 		case mcp.ContentTypeResource:
 			fmt.Printf("Message: Resource\n")
+		case mcp.ContentTypeAudio:
+			fmt.Printf("Message: Audio\n")
 		}
 		fmt.Println("---")
 	}
@@ -530,6 +532,8 @@ func (c *client) runTools() bool {
 			fmt.Printf("Truncated image data: %s...\n", data)
 		case mcp.ContentTypeResource:
 			fmt.Printf("Message: Resource\n")
+		case mcp.ContentTypeAudio:
+			fmt.Printf("Message: Audio\n")
 		}
 		fmt.Println("---")
 	}
