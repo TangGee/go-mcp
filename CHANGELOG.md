@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [Unreleased]
+
+### Added
+
+- `ServerInfo` method to `Client` struct to return the server's info.
+
 ## [0.4.1] - 2025-01-19
 
 This release implements audio content support as specified in the latest MCP specification update, adding necessary enum values and maintaining consistency with existing content type structures. The changes enable seamless integration of audio processing capabilities while preserving compatibility with existing image content handling patterns.

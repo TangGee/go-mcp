@@ -30,6 +30,7 @@ type ClientOption func(*Client)
 type Client struct {
 	capabilities       ClientCapabilities
 	info               Info
+	serverInfo         Info
 	serverCapabilities ServerCapabilities
 	transport          ClientTransport
 
@@ -700,6 +701,11 @@ func (c *Client) SetLogLevel(level LogLevel) error {
 	})
 }
 
+// ServerInfo returns the server's info.
+func (c *Client) ServerInfo() Info {
+	return c.serverInfo
+}
+
 // PromptServerSupported returns true if the server supports prompt management.
 func (c *Client) PromptServerSupported() bool {
 	return c.serverCapabilities.Prompts != nil
@@ -917,6 +923,7 @@ func (c *Client) handleInitialize(ctx context.Context, msg JSONRPCMessage) error
 		return nErr
 	}
 
+	c.serverInfo = result.ServerInfo
 	c.serverCapabilities = result.Capabilities
 	c.initialized = true
 

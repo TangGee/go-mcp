@@ -112,6 +112,14 @@ func TestInitialize(t *testing.T) {
 					t.Errorf("unexpected error: %v", s.clientConnectErr)
 					return
 				}
+
+				srvInfo := s.mcpClient.ServerInfo()
+				if srvInfo.Name != "test-server" {
+					t.Errorf("expected server name test-server, got %s", srvInfo.Name)
+				}
+				if srvInfo.Version != "1.0" {
+					t.Errorf("expected server version 1.0, got %s", srvInfo.Version)
+				}
 			}))
 		}
 	}
