@@ -277,8 +277,8 @@ type Role string
 
 // Content represents a message content with its type.
 type Content struct {
-	Type        ContentType `json:"type"`
-	Annotations Annotations `json:"annotations,omitempty"`
+	Type        ContentType  `json:"type"`
+	Annotations *Annotations `json:"annotations,omitempty"`
 
 	// For ContentTypeText
 	Text string `json:"text,omitempty"`
@@ -359,21 +359,21 @@ type CompletionArgument struct {
 // Resource represents a content resource in the system with associated metadata.
 // The content can be provided either as Text or Blob, with MimeType indicating the format.
 type Resource struct {
-	Annotations Annotations `json:"annotations,omitempty"`
-	URI         string      `json:"uri"`
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	MimeType    string      `json:"mimeType,omitempty"`
+	Annotations *Annotations `json:"annotations,omitempty"`
+	URI         string       `json:"uri"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	MimeType    string       `json:"mimeType,omitempty"`
 }
 
 // ResourceTemplate defines a template for generating resource URIs.
 // It's returned by ListResourceTemplates and used with CompletesResourceTemplate.
 type ResourceTemplate struct {
-	Annotations Annotations `json:"annotations,omitempty"`
-	URITemplate string      `json:"uriTemplate"`
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	MimeType    string      `json:"mimeType,omitempty"`
+	Annotations *Annotations `json:"annotations,omitempty"`
+	URITemplate string       `json:"uriTemplate"`
+	Name        string       `json:"name"`
+	Description string       `json:"description,omitempty"`
+	MimeType    string       `json:"mimeType,omitempty"`
 }
 
 // Tool defines a callable tool with its input schema.

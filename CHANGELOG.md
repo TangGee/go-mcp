@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- The `Annotations` field in `Content`, `Resource`, `ResourceTemplate`, and `ResourceTemplate` is now a pointer to allow for nil values, so it can be omitted when marshaled to JSON.
+
 ## [0.4.2] - 2025-01-21
 
 This release introduces a new capability for runtime server information retrieval through the `ServerInfo` method, enabling clients to dynamically access server configuration and capabilities without additional setup requirements.
