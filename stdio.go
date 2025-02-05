@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"strings"
 )
 
 // StdIO implements a standard input/output transport layer for MCP communication using
@@ -122,8 +123,9 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	return func(yield func(JSONRPCMessage) bool) {
 		defer close(s.closed)
 
-		scanner := bufio.NewScanner(s.reader)
-		for scanner.Scan() {
+		// Use bufio.Reader instead of bufio.Scanner to avoid max token size errors.
+		reader := bufio.NewReader(s.reader)
+		for {
 			// We check for session termination between each message
 			select {
 			case <-s.done:
@@ -131,13 +133,21 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 			default:
 			}
 
-			line := scanner.Text()
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				s.logger.Error("failed to read message", "err", err)
+				continue
+			}
+			line = strings.TrimSuffix(line, "\n")
 			if line == "" {
 				continue
 			}
 
 			var msg JSONRPCMessage
-			err := json.Unmarshal([]byte(line), &msg)
+			err = json.Unmarshal([]byte(line), &msg)
 			if err != nil {
 				s.logger.Error("failed to unmarshal message", "err", err)
 				continue
@@ -147,10 +157,6 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 			if !yield(msg) {
 				return
 			}
-		}
-		// We ignore ErrClosedPipe as it's an expected error during shutdown
-		if scanner.Err() != nil && !errors.Is(scanner.Err(), io.ErrClosedPipe) {
-			s.logger.Error("scan error", "err", scanner.Err())
 		}
 	}
 }
