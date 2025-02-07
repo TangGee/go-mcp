@@ -139,7 +139,7 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 					return
 				}
 				s.logger.Error("failed to read message", "err", err)
-				continue
+				return
 			}
 			line = strings.TrimSuffix(line, "\n")
 			if line == "" {
