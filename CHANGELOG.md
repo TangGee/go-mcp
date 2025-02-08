@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The `Annotations` field in `Content`, `Resource`, `ResourceTemplate`, and `ResourceTemplate` is now a pointer to allow for nil values, so it can be omitted when marshaled to JSON.
+- The `StdIO` transport now uses `io.Reader` and `io.Writer` instead of `io.ReadCloser` and `io.WriteCloser` to leave closing logic to the caller.
+
+### Removed
+
+- The `Close` method from `StdIO` transport.
 
 ## [0.4.2] - 2025-01-21
 

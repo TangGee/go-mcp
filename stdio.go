@@ -28,27 +28,20 @@ type StdIO struct {
 }
 
 type stdIOSession struct {
-	reader io.ReadCloser
-	writer io.WriteCloser
+	reader io.Reader
+	writer io.Writer
 	logger *slog.Logger
-
-	// done signals session termination to all goroutines
-	done chan struct{}
-	// closed is used to ensure proper cleanup sequencing
-	closed chan struct{}
 }
 
 // NewStdIO creates a new StdIO instance configured with the provided reader and writer.
 // The instance is initialized with default logging and required internal communication
 // channels.
-func NewStdIO(reader io.ReadCloser, writer io.WriteCloser) StdIO {
+func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 	return StdIO{
 		sess: stdIOSession{
 			reader: reader,
 			writer: writer,
 			logger: slog.Default(),
-			done:   make(chan struct{}),
-			closed: make(chan struct{}),
 		},
 	}
 }
@@ -75,12 +68,6 @@ func (s StdIO) Send(ctx context.Context, msg JSONRPCMessage) error {
 func (s StdIO) StartSession(_ context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error) {
 	close(ready)
 	return s.sess.Messages(), nil
-}
-
-// Close releases all resources associated with the StdIO instance, including its
-// underlying reader and writer connections.
-func (s StdIO) Close() {
-	s.sess.close()
 }
 
 func (s stdIOSession) ID() string {
@@ -112,8 +99,6 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-s.done:
-		return nil
 	case err := <-errs:
 		return err
 	}
@@ -121,18 +106,9 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 
 func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	return func(yield func(JSONRPCMessage) bool) {
-		defer close(s.closed)
-
 		// Use bufio.Reader instead of bufio.Scanner to avoid max token size errors.
 		reader := bufio.NewReader(s.reader)
 		for {
-			// We check for session termination between each message
-			select {
-			case <-s.done:
-				return
-			default:
-			}
-
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if errors.Is(err, io.EOF) {
@@ -159,17 +135,4 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 			}
 		}
 	}
-}
-
-func (s stdIOSession) close() {
-	if err := s.reader.Close(); err != nil {
-		s.logger.Error("failed to close reader", "err", err)
-	}
-	if err := s.writer.Close(); err != nil {
-		s.logger.Error("failed to close writer", "err", err)
-	}
-
-	// We signal termination and wait for Messages goroutine to complete
-	close(s.done)
-	<-s.closed
 }

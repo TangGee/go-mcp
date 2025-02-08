@@ -18,7 +18,12 @@ type testSuite struct {
 	cancel          context.CancelFunc
 	serverTransport mcp.ServerTransport
 	clientTransport mcp.ClientTransport
-	httpServer      *httptest.Server
+
+	httpServer  *httptest.Server
+	srvIOReader *io.PipeReader
+	srvIOWriter *io.PipeWriter
+	cliIOReader *io.PipeReader
+	cliIOWriter *io.PipeWriter
 
 	mcpClient        *mcp.Client
 	clientConnectErr error
@@ -737,7 +742,7 @@ func setupSSE() (mcp.SSEServer, *mcp.SSEClient, *httptest.Server) {
 	return srv, cli, httpSrv
 }
 
-func setupStdIO() (mcp.StdIO, mcp.StdIO) {
+func setupStdIO() (mcp.StdIO, mcp.StdIO, *io.PipeReader, *io.PipeWriter, *io.PipeReader, *io.PipeWriter) {
 	srvReader, srvWriter := io.Pipe()
 	cliReader, cliWriter := io.Pipe()
 
@@ -746,14 +751,14 @@ func setupStdIO() (mcp.StdIO, mcp.StdIO) {
 	// client's output is server's input
 	cliIO := mcp.NewStdIO(cliReader, srvWriter)
 
-	return srvIO, cliIO
+	return srvIO, cliIO, srvReader, srvWriter, cliReader, cliWriter
 }
 
 func (t *testSuite) setup() {
 	if t.cfg.transportName == "SSE" {
 		t.serverTransport, t.clientTransport, t.httpServer = setupSSE()
 	} else {
-		t.serverTransport, t.clientTransport = setupStdIO()
+		t.serverTransport, t.clientTransport, t.srvIOReader, t.srvIOWriter, t.cliIOReader, t.cliIOWriter = setupStdIO()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -790,8 +795,9 @@ func (t *testSuite) teardown() {
 		sseServer.Close()
 		return
 	}
-	srvIO, _ := t.serverTransport.(mcp.StdIO)
-	cliIO, _ := t.clientTransport.(mcp.StdIO)
-	srvIO.Close()
-	cliIO.Close()
+
+	_ = t.srvIOReader.Close()
+	_ = t.srvIOWriter.Close()
+	_ = t.cliIOReader.Close()
+	_ = t.cliIOWriter.Close()
 }
