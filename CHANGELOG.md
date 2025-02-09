@@ -5,16 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.5.0] - 2025-02-09
+
+This release focuses on improving JSON serialization flexibility and simplifying I/O interfaces. The changes include making annotations optional in resource types and streamlining the StdIO transport implementation by delegating closing responsibilities to callers.
 
 ### Changed
 
-- The `Annotations` field in `Content`, `Resource`, `ResourceTemplate`, and `ResourceTemplate` is now a pointer to allow for nil values, so it can be omitted when marshaled to JSON.
-- The `StdIO` transport now uses `io.Reader` and `io.Writer` instead of `io.ReadCloser` and `io.WriteCloser` to leave closing logic to the caller.
+- Make `Annotations` field nullable in resource types to support optional JSON serialization.
+- Simplify `StdIO` transport by using `io.Reader` and `io.Writer` interfaces instead of closeable variants.
 
 ### Removed
 
-- The `Close` method from `StdIO` transport.
+- - Remove `Close` method from `StdIO` transport as part of I/O interface simplification.
 
 ## [0.4.2] - 2025-01-21
 
