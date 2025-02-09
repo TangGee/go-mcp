@@ -3,10 +3,8 @@ package filesystem
 import (
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
-	"path/filepath"
-	"strings"
+	"time"
 
 	"github.com/MegaGrindStone/go-mcp"
 )
@@ -110,29 +108,28 @@ without reading the actual content. Only works within allowed directories.
         `,
 			InputSchema: getFileInfoSchema,
 		},
+		{
+			Name:        "list_allowed_directories",
+			Description: ``,
+			InputSchema: listAllowedDirectoriesSchema,
+		},
 	},
 }
 
-func readFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func readFile(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var rfParams ReadFileArgs
 	if err := json.Unmarshal(params.Arguments, &rfParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(rfParams.Path))
-
-	info, err := os.Stat(fullPath)
+	validPath, err := validatePath(rfParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
 	}
 
-	if info.IsDir() {
-		return mcp.CallToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
-	}
-
-	bs, err := os.ReadFile(fullPath)
+	bs, err := os.ReadFile(validPath)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", validPath, err)
 	}
 
 	return mcp.CallToolResult{
@@ -146,7 +143,7 @@ func readFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, e
 	}, nil
 }
 
-func readMultipleFiles(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func readMultipleFiles(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var rmfParams ReadMultipleFilesArgs
 	if err := json.Unmarshal(params.Arguments, &rmfParams); err != nil {
 		return mcp.CallToolResult{}, err
@@ -155,20 +152,22 @@ func readMultipleFiles(rootPath string, params mcp.CallToolParams) (mcp.CallTool
 	var result []mcp.Content
 
 	for _, path := range rmfParams.Paths {
-		fullPath := filepath.Join(rootPath, filepath.Clean(path))
-
-		info, err := os.Stat(fullPath)
+		validPath, err := validatePath(path, rootPaths)
 		if err != nil {
-			return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+			result = append(result, mcp.Content{
+				Type: mcp.ContentTypeText,
+				Text: fmt.Sprintf("failed to validate path %s: %s", path, err),
+			})
+			continue
 		}
 
-		if info.IsDir() {
-			return mcp.CallToolResult{}, fmt.Errorf("path %s is a directory, not a file", fullPath)
-		}
-
-		bs, err := os.ReadFile(fullPath)
+		bs, err := os.ReadFile(validPath)
 		if err != nil {
-			return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+			result = append(result, mcp.Content{
+				Type: mcp.ContentTypeText,
+				Text: fmt.Sprintf("failed to read file with path %s: %s", path, err),
+			})
+			continue
 		}
 
 		content := fmt.Sprintf("File content of %s:\n%s\n", path, string(bs))
@@ -185,17 +184,19 @@ func readMultipleFiles(rootPath string, params mcp.CallToolParams) (mcp.CallTool
 	}, nil
 }
 
-func writeFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func writeFile(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var wfParams WriteFileArgs
 	if err := json.Unmarshal(params.Arguments, &wfParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(wfParams.Path))
-
-	err := os.WriteFile(fullPath, []byte(wfParams.Content), 0600)
+	validPath, err := validatePath(wfParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
+	}
+
+	if err = os.WriteFile(validPath, []byte(wfParams.Content), 0600); err != nil {
+		return mcp.CallToolResult{}, fmt.Errorf("failed to write file with path %s: %w", validPath, err)
 	}
 
 	return mcp.CallToolResult{
@@ -209,66 +210,46 @@ func writeFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, 
 	}, nil
 }
 
-func editFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func editFile(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var efParams EditFileArgs
 	if err := json.Unmarshal(params.Arguments, &efParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(efParams.Path))
-
-	bs, err := os.ReadFile(fullPath)
+	validPath, err := validatePath(efParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
 	}
 
-	newContent := string(bs)
-
-	// TODO: Use more sophisticated diff algorithm to match the typescript implementation.
-
-	for _, edit := range efParams.Edits {
-		newContent = strings.ReplaceAll(newContent, edit.OldText, edit.NewText)
-	}
-
-	if efParams.DryRun {
-		return mcp.CallToolResult{
-			Content: []mcp.Content{
-				{
-					Type: mcp.ContentTypeText,
-					Text: fmt.Sprintf("File %s edited successfully", efParams.Path),
-				},
-			},
-			IsError: false,
-		}, nil
-	}
-
-	err = os.WriteFile(fullPath, []byte(newContent), 0600)
+	result, err := applyFileEdits(validPath, efParams.Edits, efParams.DryRun)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to write file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
 	}
 
 	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
-				Text: fmt.Sprintf("File %s edited successfully", efParams.Path),
+				Text: result,
 			},
 		},
 		IsError: false,
 	}, nil
 }
 
-func createDirectory(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func createDirectory(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var cdParams CreateDirectoryArgs
 	if err := json.Unmarshal(params.Arguments, &cdParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(cdParams.Path))
-
-	err := os.MkdirAll(fullPath, 0700)
+	validPath, err := validatePath(cdParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to create directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
+	}
+
+	if err := os.MkdirAll(validPath, 0700); err != nil {
+		return mcp.CallToolResult{}, fmt.Errorf("failed to create directory with path %s: %w", validPath, err)
 	}
 
 	return mcp.CallToolResult{
@@ -281,17 +262,20 @@ func createDirectory(rootPath string, params mcp.CallToolParams) (mcp.CallToolRe
 	}, nil
 }
 
-func listDirectory(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func listDirectory(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var ldParams ListDirectoryArgs
 	if err := json.Unmarshal(params.Arguments, &ldParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(ldParams.Path))
-
-	files, err := os.ReadDir(fullPath)
+	validPath, err := validatePath(ldParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
+	}
+
+	files, err := os.ReadDir(validPath)
+	if err != nil {
+		return mcp.CallToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", validPath, err)
 	}
 
 	var result []mcp.Content
@@ -316,55 +300,50 @@ func listDirectory(rootPath string, params mcp.CallToolParams) (mcp.CallToolResu
 	}, nil
 }
 
-func directoryTree(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func directoryTree(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var dtParams DirectoryTreeArgs
 	if err := json.Unmarshal(params.Arguments, &dtParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(dtParams.Path))
-
-	files, err := os.ReadDir(fullPath)
+	result, err := buildTree(rootPaths, dtParams.Path)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to read directory with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
 	}
 
-	// TODO: Display actual directory tree instead of just directory listing.
-
-	var result []mcp.Content
-
-	for _, file := range files {
-		prefix := "[FILE] "
-		if file.IsDir() {
-			prefix = "[DIR] "
-		}
-
-		content := fmt.Sprintf("%s%s\n", prefix, file.Name())
-
-		result = append(result, mcp.Content{
-			Type: mcp.ContentTypeText,
-			Text: content,
-		})
+	resultJSON, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return mcp.CallToolResult{}, err
 	}
 
 	return mcp.CallToolResult{
-		Content: result,
+		Content: []mcp.Content{
+			{
+				Type: mcp.ContentTypeText,
+				Text: string(resultJSON),
+			},
+		},
 		IsError: false,
 	}, nil
 }
 
-func moveFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func moveFile(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var mfParams MoveFileArgs
 	if err := json.Unmarshal(params.Arguments, &mfParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullSourcePath := filepath.Join(rootPath, filepath.Clean(mfParams.Source))
-	fullDestinationPath := filepath.Join(rootPath, filepath.Clean(mfParams.Destination))
-
-	err := os.Rename(fullSourcePath, fullDestinationPath)
+	validSourcePath, err := validatePath(mfParams.Source, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to move file with path %s: %w", fullSourcePath, err)
+		return mcp.CallToolResult{}, err
+	}
+	validDestinationPath, err := validatePath(mfParams.Destination, rootPaths)
+	if err != nil {
+		return mcp.CallToolResult{}, err
+	}
+
+	if err := os.Rename(validSourcePath, validDestinationPath); err != nil {
+		return mcp.CallToolResult{}, fmt.Errorf("failed to move file with path %s: %w", validSourcePath, err)
 	}
 
 	return mcp.CallToolResult{
@@ -378,54 +357,18 @@ func moveFile(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, e
 	}, nil
 }
 
-func searchFiles(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func searchFiles(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var sfParams SearchFilesArgs
 	if err := json.Unmarshal(params.Arguments, &sfParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	var result []mcp.Content
-
-	if err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		matched, err := filepath.Match(sfParams.Pattern, path)
-		if err != nil {
-			return err
-		}
-
-		if !matched {
-			return nil
-		}
-
-		for _, ep := range sfParams.Exclude {
-			exMatched, err := filepath.Match(ep, path)
-			if err != nil {
-				return err
-			}
-
-			if exMatched {
-				return nil
-			}
-		}
-
-		result = append(result, mcp.Content{
-			Type: mcp.ContentTypeText,
-			Text: path,
-		})
-
-		return nil
-	}); err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to search files: %w", err)
+	results, err := searchFilesWithPattern(sfParams.Path, sfParams.Pattern, rootPaths, sfParams.Exclude)
+	if err != nil {
+		return mcp.CallToolResult{}, err
 	}
 
-	if len(result) == 0 {
+	if len(results) == 0 {
 		return mcp.CallToolResult{
 			Content: []mcp.Content{
 				{
@@ -437,32 +380,84 @@ func searchFiles(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult
 		}, nil
 	}
 
+	var result []mcp.Content
+	for _, path := range results {
+		result = append(result, mcp.Content{
+			Type: mcp.ContentTypeText,
+			Text: path,
+		})
+	}
+
 	return mcp.CallToolResult{
 		Content: result,
 		IsError: false,
 	}, nil
 }
 
-func getFileInfo(rootPath string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
+func getFileInfo(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult, error) {
 	var gfiParams GetFileInfoArgs
 	if err := json.Unmarshal(params.Arguments, &gfiParams); err != nil {
 		return mcp.CallToolResult{}, err
 	}
 
-	fullPath := filepath.Join(rootPath, filepath.Clean(gfiParams.Path))
-
-	info, err := os.Stat(fullPath)
+	validPath, err := validatePath(gfiParams.Path, rootPaths)
 	if err != nil {
-		return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", fullPath, err)
+		return mcp.CallToolResult{}, err
+	}
+
+	info, err := os.Stat(validPath)
+	if err != nil {
+		return mcp.CallToolResult{}, fmt.Errorf("failed to stat file with path %s: %w", validPath, err)
+	}
+
+	type fileStat struct {
+		Size        int64       `json:"size"`
+		Created     time.Time   `json:"created"`
+		Modified    time.Time   `json:"modified"`
+		Accessed    time.Time   `json:"accessed"`
+		IsDirectory bool        `json:"isDirectory"`
+		IsFile      bool        `json:"isFile"`
+		Permissions os.FileMode `json:"permissions"`
+	}
+
+	st := fileStat{
+		Size:        info.Size(),
+		Created:     info.ModTime(),
+		Modified:    info.ModTime(),
+		Accessed:    info.ModTime(),
+		IsDirectory: info.IsDir(),
+		IsFile:      info.Mode().IsRegular(),
+		Permissions: info.Mode(),
+	}
+
+	resultJSON, err := json.Marshal(st)
+	if err != nil {
+		return mcp.CallToolResult{}, err
 	}
 
 	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
 				Type: mcp.ContentTypeText,
-				Text: fmt.Sprintf("File %s info:\nSize: %d\nLast modified: %s\n", gfiParams.Path, info.Size(), info.ModTime()),
+				Text: string(resultJSON),
 			},
 		},
+		IsError: false,
+	}, nil
+}
+
+func listAllowedDirectories(rootPaths []string, _ mcp.CallToolParams) (mcp.CallToolResult, error) {
+	var result []mcp.Content
+
+	for _, rootPath := range rootPaths {
+		result = append(result, mcp.Content{
+			Type: mcp.ContentTypeText,
+			Text: rootPath,
+		})
+	}
+
+	return mcp.CallToolResult{
+		Content: result,
 		IsError: false,
 	}, nil
 }

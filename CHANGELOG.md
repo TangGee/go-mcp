@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- Improve `filesystem` server for better compatibility with the official implementation.
+
 ## [0.5.0] - 2025-02-09
 
 This release focuses on improving JSON serialization flexibility and simplifying I/O interfaces. The changes include making annotations optional in resource types and streamlining the StdIO transport implementation by delegating closing responsibilities to callers.
@@ -16,7 +22,7 @@ This release focuses on improving JSON serialization flexibility and simplifying
 
 ### Removed
 
-- - Remove `Close` method from `StdIO` transport as part of I/O interface simplification.
+- Remove `Close` method from `StdIO` transport as part of I/O interface simplification.
 
 ## [0.4.2] - 2025-01-21
 

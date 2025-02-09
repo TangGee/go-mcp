@@ -217,3 +217,11 @@ var getFileInfoSchema = []byte(`
     "required": ["path"]
   }
 `)
+
+var listAllowedDirectoriesSchema = []byte(`
+  {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+`)

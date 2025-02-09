@@ -30,7 +30,7 @@ func main() {
 	cliIO := mcp.NewStdIO(cliReader, srvWriter)
 	srvIO := mcp.NewStdIO(srvReader, cliWriter)
 
-	srv, err := filesystem.NewServer(*path)
+	srv, err := filesystem.NewServer([]string{*path})
 	if err != nil {
 		fmt.Println("Error: failed to create filesystem server:", err)
 		os.Exit(1)
@@ -44,7 +44,7 @@ func main() {
 	)
 
 	cli := newClient(cliIO)
-	go cli.run()
+	go cli.run(*path)
 
 	<-cli.done
 

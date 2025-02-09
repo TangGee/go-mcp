@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,7 +44,7 @@ func newClient(transport mcp.ClientTransport) client {
 	}
 }
 
-func (c client) run() {
+func (c client) run(rootPath string) {
 	defer c.stop()
 
 	ready := make(chan struct{})
@@ -111,7 +112,7 @@ func (c client) run() {
 
 		switch arrInput[0] {
 		case "call":
-			if c.callTool(tool) {
+			if c.callTool(tool, rootPath) {
 				return
 			}
 		case "desc":
@@ -131,33 +132,35 @@ func (c client) run() {
 	}
 }
 
-func (c client) callTool(tool mcp.Tool) bool {
+func (c client) callTool(tool mcp.Tool, rootPath string) bool {
 	switch tool.Name {
 	case "read_file":
-		return c.callReadFile()
+		return c.callReadFile(rootPath)
 	case "read_multiple_files":
-		return c.callReadMultipleFiles()
+		return c.callReadMultipleFiles(rootPath)
 	case "write_file":
-		return c.callWriteFile()
+		return c.callWriteFile(rootPath)
 	case "edit_file":
-		return c.callEditFile()
+		return c.callEditFile(rootPath)
 	case "create_directory":
-		return c.callCreateDirectory()
+		return c.callCreateDirectory(rootPath)
 	case "list_directory":
-		return c.callListDirectory()
+		return c.callListDirectory(rootPath)
 	case "directory_tree":
-		return c.callDirectoryTree()
+		return c.callDirectoryTree(rootPath)
 	case "move_file":
-		return c.callMoveFile()
+		return c.callMoveFile(rootPath)
 	case "search_files":
-		return c.callSearchFiles()
+		return c.callSearchFiles(rootPath)
 	case "get_file_info":
-		return c.callGetFileInfo()
+		return c.callGetFileInfo(rootPath)
+	case "list_allowed_directories":
+		return c.listAllowedDirectories()
 	}
 	return false
 }
 
-func (c client) callReadFile() bool {
+func (c client) callReadFile(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
 	input, err := c.waitStdIOInput()
@@ -170,7 +173,7 @@ func (c client) callReadFile() bool {
 	}
 
 	args := filesystem.ReadFileArgs{
-		Path: input,
+		Path: filepath.Join(rootPath, input),
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -194,7 +197,7 @@ func (c client) callReadFile() bool {
 	return false
 }
 
-func (c client) callReadMultipleFiles() bool {
+func (c client) callReadMultipleFiles(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the files (comma-separated):")
 
 	input, err := c.waitStdIOInput()
@@ -206,8 +209,18 @@ func (c client) callReadMultipleFiles() bool {
 		return false
 	}
 
+	inputArr := strings.Split(input, ",")
+	var paths []string
+	for _, path := range inputArr {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		paths = append(paths, filepath.Join(rootPath, path))
+	}
+
 	args := filesystem.ReadMultipleFilesArgs{
-		Paths: strings.Split(input, ","),
+		Paths: paths,
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -235,7 +248,7 @@ func (c client) callReadMultipleFiles() bool {
 	return false
 }
 
-func (c client) callWriteFile() bool {
+func (c client) callWriteFile(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
 	input, err := c.waitStdIOInput()
@@ -246,7 +259,7 @@ func (c client) callWriteFile() bool {
 		fmt.Print(err)
 		return false
 	}
-	path := input
+	path := filepath.Join(rootPath, input)
 
 	fmt.Println("Enter content:")
 
@@ -286,7 +299,7 @@ func (c client) callWriteFile() bool {
 	return false
 }
 
-func (c client) callEditFile() bool {
+func (c client) callEditFile(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
 	input, err := c.waitStdIOInput()
@@ -297,7 +310,7 @@ func (c client) callEditFile() bool {
 		fmt.Print(err)
 		return false
 	}
-	path := input
+	path := filepath.Join(rootPath, input)
 
 	fmt.Println("Enter edits (old text:new text), each separated by a comma:")
 
@@ -338,11 +351,28 @@ func (c client) callEditFile() bool {
 		})
 	}
 
+	if len(edits) == 0 {
+		fmt.Println("No edits provided")
+		return false
+	}
+
+	fmt.Println("Dry run? (y/n)")
+
+	input, err = c.waitStdIOInput()
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return false
+		}
+		fmt.Print(err)
+		return false
+	}
+
+	dryRun := input == "y"
+
 	args := filesystem.EditFileArgs{
-		Path:  path,
-		Edits: edits,
-		// Because the server doesn't support diff yet, dryRun is not supported yet.
-		DryRun: false,
+		Path:   path,
+		Edits:  edits,
+		DryRun: dryRun,
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -366,7 +396,7 @@ func (c client) callEditFile() bool {
 	return false
 }
 
-func (c client) callCreateDirectory() bool {
+func (c client) callCreateDirectory(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
 	input, err := c.waitStdIOInput()
@@ -379,7 +409,7 @@ func (c client) callCreateDirectory() bool {
 	}
 
 	args := filesystem.CreateDirectoryArgs{
-		Path: input,
+		Path: filepath.Join(rootPath, input),
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -403,7 +433,7 @@ func (c client) callCreateDirectory() bool {
 	return false
 }
 
-func (c *client) callListDirectory() bool {
+func (c *client) callListDirectory(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
 	input, err := c.waitStdIOInput()
@@ -416,7 +446,7 @@ func (c *client) callListDirectory() bool {
 	}
 
 	args := filesystem.ListDirectoryArgs{
-		Path: input,
+		Path: filepath.Join(rootPath, input),
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -442,7 +472,7 @@ func (c *client) callListDirectory() bool {
 	return false
 }
 
-func (c client) callDirectoryTree() bool {
+func (c client) callDirectoryTree(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the directory:")
 
 	input, err := c.waitStdIOInput()
@@ -455,7 +485,7 @@ func (c client) callDirectoryTree() bool {
 	}
 
 	args := filesystem.DirectoryTreeArgs{
-		Path: input,
+		Path: filepath.Join(rootPath, input),
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -481,7 +511,7 @@ func (c client) callDirectoryTree() bool {
 	return false
 }
 
-func (c client) callMoveFile() bool {
+func (c client) callMoveFile(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the source file:")
 
 	input, err := c.waitStdIOInput()
@@ -492,7 +522,7 @@ func (c client) callMoveFile() bool {
 		fmt.Print(err)
 		return false
 	}
-	path := input
+	path := filepath.Join(rootPath, input)
 
 	fmt.Println("Enter relative path (from the root) to the destination file:")
 
@@ -504,7 +534,7 @@ func (c client) callMoveFile() bool {
 		fmt.Print(err)
 		return false
 	}
-	destination := input
+	destination := filepath.Join(rootPath, input)
 
 	args := filesystem.MoveFileArgs{
 		Source:      path,
@@ -532,7 +562,7 @@ func (c client) callMoveFile() bool {
 	return false
 }
 
-func (c client) callSearchFiles() bool {
+func (c client) callSearchFiles(rootPath string) bool {
 	fmt.Println("Enter pattern:")
 
 	input, err := c.waitStdIOInput()
@@ -568,7 +598,7 @@ func (c client) callSearchFiles() bool {
 	}
 
 	args := filesystem.SearchFilesArgs{
-		Path:    pattern,
+		Path:    rootPath,
 		Pattern: pattern,
 		Exclude: excludePatterns,
 	}
@@ -596,7 +626,7 @@ func (c client) callSearchFiles() bool {
 	return false
 }
 
-func (c client) callGetFileInfo() bool {
+func (c client) callGetFileInfo(rootPath string) bool {
 	fmt.Println("Enter relative path (from the root) to the file:")
 
 	input, err := c.waitStdIOInput()
@@ -609,7 +639,7 @@ func (c client) callGetFileInfo() bool {
 	}
 
 	args := filesystem.GetFileInfoArgs{
-		Path: input,
+		Path: filepath.Join(rootPath, input),
 	}
 	argsBs, _ := json.Marshal(args)
 
@@ -629,6 +659,28 @@ func (c client) callGetFileInfo() bool {
 	}
 
 	fmt.Println(result.Content[0].Text)
+
+	return false
+}
+
+func (c client) listAllowedDirectories() bool {
+	params := mcp.CallToolParams{
+		Name: "list_allowed_directories",
+	}
+	result, err := c.cli.CallTool(c.ctx, params)
+	if err != nil {
+		fmt.Printf("failed to call tool: %v\n", err)
+		return false
+	}
+
+	if len(result.Content) == 0 {
+		fmt.Println("File is empty")
+		return false
+	}
+
+	for _, dir := range result.Content {
+		fmt.Println(dir.Text)
+	}
 
 	return false
 }

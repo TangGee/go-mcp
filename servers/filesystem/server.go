@@ -17,7 +17,7 @@ import (
 // It implements both the mcp.Server and mcp.ToolServer interfaces to provide filesystem
 // functionality through the MCP protocol.
 type Server struct {
-	rootPath string
+	rootPaths []string
 }
 
 // NewServer creates a new filesystem MCP server that provides access to files under the specified root directory.
@@ -26,17 +26,19 @@ type Server struct {
 // are restricted to this directory and its subdirectories for security.
 //
 // It returns an error if the root path does not exist, is not a directory, or cannot be accessed.
-func NewServer(root string) (Server, error) {
-	info, err := os.Stat(filepath.Clean(root))
-	if err != nil {
-		return Server{}, fmt.Errorf("failed to stat root directory: %w", err)
-	}
-	if !info.IsDir() {
-		return Server{}, fmt.Errorf("root directory is not a directory: %s", root)
+func NewServer(roots []string) (Server, error) {
+	for _, root := range roots {
+		info, err := os.Stat(filepath.Clean(root))
+		if err != nil {
+			return Server{}, fmt.Errorf("failed to stat root directory: %w", err)
+		}
+		if !info.IsDir() {
+			return Server{}, fmt.Errorf("root directory is not a directory: %s", root)
+		}
 	}
 
 	s := Server{
-		rootPath: root,
+		rootPaths: roots,
 	}
 
 	return s, nil
@@ -88,25 +90,27 @@ func (s Server) CallTool(
 ) (mcp.CallToolResult, error) {
 	switch params.Name {
 	case "read_file":
-		return readFile(s.rootPath, params)
+		return readFile(s.rootPaths, params)
 	case "read_multiple_files":
-		return readMultipleFiles(s.rootPath, params)
+		return readMultipleFiles(s.rootPaths, params)
 	case "write_file":
-		return writeFile(s.rootPath, params)
+		return writeFile(s.rootPaths, params)
 	case "edit_file":
-		return editFile(s.rootPath, params)
+		return editFile(s.rootPaths, params)
 	case "create_directory":
-		return createDirectory(s.rootPath, params)
+		return createDirectory(s.rootPaths, params)
 	case "list_directory":
-		return listDirectory(s.rootPath, params)
+		return listDirectory(s.rootPaths, params)
 	case "directory_tree":
-		return directoryTree(s.rootPath, params)
+		return directoryTree(s.rootPaths, params)
 	case "move_file":
-		return moveFile(s.rootPath, params)
+		return moveFile(s.rootPaths, params)
 	case "search_files":
-		return searchFiles(s.rootPath, params)
+		return searchFiles(s.rootPaths, params)
 	case "get_file_info":
-		return getFileInfo(s.rootPath, params)
+		return getFileInfo(s.rootPaths, params)
+	case "list_allowed_directories":
+		return listAllowedDirectories(s.rootPaths, params)
 	default:
 		return mcp.CallToolResult{}, fmt.Errorf("tool not found: %s", params.Name)
 	}
