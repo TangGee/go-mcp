@@ -132,6 +132,10 @@ func readFile(rootPaths []string, params mcp.CallToolParams) (mcp.CallToolResult
 		return mcp.CallToolResult{}, fmt.Errorf("failed to read file with path %s: %w", validPath, err)
 	}
 
+	if len(bs) == 0 {
+		return mcp.CallToolResult{}, fmt.Errorf("file with path %s is empty", validPath)
+	}
+
 	return mcp.CallToolResult{
 		Content: []mcp.Content{
 			{
