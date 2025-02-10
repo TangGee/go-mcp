@@ -506,7 +506,6 @@ const (
 	errMsgInvalidJSON                    = "Invalid json"
 	errMsgUnsupportedProtocolVersion     = "Unsupported protocol version"
 	errMsgInsufficientClientCapabilities = "Insufficient client capabilities"
-	errMsgInternalError                  = "Internal error"
 	errMsgWriteTimeout                   = "Write timeout"
 	errMsgReadTimeout                    = "Read timeout"
 
@@ -585,5 +584,5 @@ func (m MustString) MarshalJSON() ([]byte, error) {
 }
 
 func (j JSONRPCError) Error() string {
-	return fmt.Sprintf("request error, code: %d, message: %s, data %v", j.Code, j.Message, j.Data)
+	return fmt.Sprintf("request error, code: %d, message: %s, data %+v", j.Code, j.Message, j.Data)
 }

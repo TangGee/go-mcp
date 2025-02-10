@@ -617,8 +617,7 @@ func (s server) handleListPrompts(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to list prompts: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -648,8 +647,7 @@ func (s server) handleGetPrompt(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to get prompt: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -679,8 +677,7 @@ func (s server) handleListResources(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to list resources: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -710,8 +707,7 @@ func (s server) handleReadResource(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to read resource: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -742,8 +738,7 @@ func (s server) handleListResourceTemplates(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to list resource templates: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -813,8 +808,7 @@ func (s server) handleCompletePrompt(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to complete prompt: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -844,8 +838,7 @@ func (s server) handleCompleteResource(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to complete resource template: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -875,8 +868,7 @@ func (s server) handleListTools(sessID string, msg JSONRPCMessage) {
 		nErr := fmt.Errorf("failed to list tools: %w", err)
 		s.sendError(sessID, msg.ID, JSONRPCError{
 			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
+			Message: nErr.Error(),
 		})
 		return
 	}
@@ -903,13 +895,15 @@ func (s server) handleCallTool(sessID string, msg JSONRPCMessage) {
 
 	result, err := s.toolServer.CallTool(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
 	if err != nil {
-		nErr := fmt.Errorf("failed to call tool: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: errMsgInternalError,
-			Data:    map[string]any{"error": nErr},
-		})
-		return
+		result = CallToolResult{
+			Content: []Content{
+				{
+					Type: ContentTypeText,
+					Text: err.Error(),
+				},
+			},
+			IsError: true,
+		}
 	}
 
 	s.sendResult(sessID, msg.ID, result)
