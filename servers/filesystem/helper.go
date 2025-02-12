@@ -250,6 +250,11 @@ func buildTree(rootPaths []string, currentPath string) ([]treeEntry, error) {
 	// Build tree entries
 	result := make([]treeEntry, 0, len(entries))
 	for _, entry := range entries {
+		// Skip .git directory
+		if entry.Name() == ".git" {
+			continue
+		}
+
 		entryData := treeEntry{
 			Name: entry.Name(),
 			Type: "file",
