@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,7 +104,8 @@ func isSubpath(path, base string) bool {
 }
 
 func normalizeLineEndings(text string) string {
-	return strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.ReplaceAll(text, "\r", "\n")
 }
 
 func createUnifiedDiff(originalContent, newContent, filepath string) string {
@@ -136,10 +138,29 @@ func applyFileEdits(filePath string, edits []EditOperation, dryRun bool) (string
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 
-	// Normalize line endings
-	modifiedContent := normalizeLineEndings(string(content))
+	// Apply edits
+	modifiedContent, err := applyEdits(string(content), edits)
+	if err != nil {
+		return "", err
+	}
 
-	// Apply edits sequentially
+	// Create and format diff
+	diff := createUnifiedDiff(string(content), modifiedContent, filePath)
+	formattedDiff := formatDiffOutput(diff)
+
+	// Write changes if not dry run
+	if !dryRun {
+		if err := os.WriteFile(filePath, []byte(modifiedContent), 0600); err != nil {
+			return "", fmt.Errorf("failed to write file: %w", err)
+		}
+	}
+
+	return formattedDiff, nil
+}
+
+func applyEdits(content string, edits []EditOperation) (string, error) {
+	modifiedContent := normalizeLineEndings(content)
+
 	for _, edit := range edits {
 		normalizedOld := normalizeLineEndings(edit.OldText)
 		normalizedNew := normalizeLineEndings(edit.NewText)
@@ -150,84 +171,94 @@ func applyFileEdits(filePath string, edits []EditOperation, dryRun bool) (string
 			continue
 		}
 
-		// Try line-by-line matching with whitespace flexibility
-		oldLines := strings.Split(normalizedOld, "\n")
-		contentLines := strings.Split(modifiedContent, "\n")
-		matchFound := false
-
-		for i := 0; i <= len(contentLines)-len(oldLines); i++ {
-			potentialMatch := contentLines[i : i+len(oldLines)]
-			isMatch := true
-
-			// Compare lines with normalized whitespace
-			for j, oldLine := range oldLines {
-				contentLine := potentialMatch[j]
-				if strings.TrimSpace(oldLine) != strings.TrimSpace(contentLine) {
-					isMatch = false
-					break
-				}
-			}
-
-			if isMatch {
-				// Preserve original indentation
-				originalIndent := getLeadingWhitespace(contentLines[i])
-				newLines := make([]string, 0)
-
-				// Process new content lines
-				for j, line := range strings.Split(normalizedNew, "\n") {
-					if j == 0 {
-						newLines = append(newLines, originalIndent+strings.TrimLeft(line, " \t"))
-						continue
-					}
-
-					// Preserve relative indentation for subsequent lines
-					oldIndent := getLeadingWhitespace(oldLines[j])
-					newIndent := getLeadingWhitespace(line)
-					relativeIndent := len(newIndent) - len(oldIndent)
-					if relativeIndent > 0 {
-						newLines = append(newLines, originalIndent+strings.Repeat(" ", relativeIndent)+strings.TrimLeft(line, " \t"))
-					} else {
-						newLines = append(newLines, originalIndent+strings.TrimLeft(line, " \t"))
-					}
-				}
-
-				// Replace the matched lines with new content
-				newContentLines := make([]string, 0)
-				newContentLines = append(newContentLines, contentLines[:i]...)
-				newContentLines = append(newContentLines, newLines...)
-				newContentLines = append(newContentLines, contentLines[i+len(oldLines):]...)
-				modifiedContent = strings.Join(newContentLines, "\n")
-				matchFound = true
-				break
-			}
-		}
-
-		if !matchFound {
+		// Try line-by-line matching
+		newContent, found := tryLineByLineMatch(modifiedContent, normalizedOld, normalizedNew)
+		if !found {
 			return "", fmt.Errorf("could not find exact match for edit:\n%s", edit.OldText)
+		}
+		modifiedContent = newContent
+	}
+
+	return modifiedContent, nil
+}
+
+func tryLineByLineMatch(content, oldText, newText string) (string, bool) {
+	oldLines := strings.Split(oldText, "\n")
+	contentLines := strings.Split(content, "\n")
+
+	for i := 0; i <= len(contentLines)-len(oldLines); i++ {
+		potentialMatch := contentLines[i : i+len(oldLines)]
+		if isMatchingBlock(potentialMatch, oldLines) {
+			return replaceMatchingBlock(contentLines, i, len(oldLines), oldLines, newText), true
 		}
 	}
 
-	// Create unified diff
-	diff := createUnifiedDiff(string(content), modifiedContent, filePath)
+	return content, false
+}
 
-	// Format diff with appropriate number of backticks
+func isMatchingBlock(contentBlock, oldLines []string) bool {
+	for j, oldLine := range oldLines {
+		if strings.TrimSpace(oldLine) != strings.TrimSpace(contentBlock[j]) {
+			return false
+		}
+	}
+	return true
+}
+
+func replaceMatchingBlock(
+	contentLines []string,
+	startIdx, blockLen int,
+	oldLines []string,
+	newText string,
+) string {
+	originalIndent := getLeadingWhitespace(contentLines[startIdx])
+	newLines := processNewLines(originalIndent, oldLines, strings.Split(newText, "\n"))
+
+	result := make([]string, 0, len(contentLines)-blockLen+len(newLines))
+	result = append(result, contentLines[:startIdx]...)
+	result = append(result, newLines...)
+	result = append(result, contentLines[startIdx+blockLen:]...)
+
+	return strings.Join(result, "\n")
+}
+
+func processNewLines(originalIndent string, oldLines []string, newLines []string) []string {
+	result := make([]string, 0, len(newLines))
+
+	for j, line := range newLines {
+		if j == 0 {
+			result = append(result, originalIndent+strings.TrimLeft(line, " \t"))
+			continue
+		}
+
+		if strings.TrimSpace(line) == "" {
+			result = append(result, originalIndent)
+			continue
+		}
+
+		oldIndent := ""
+		if j < len(oldLines) {
+			oldIndent = getLeadingWhitespace(oldLines[j])
+		}
+		newIndent := getLeadingWhitespace(line)
+		relativeIndent := len(newIndent) - len(oldIndent)
+
+		indentAmount := math.Max(0, float64(relativeIndent))
+		result = append(result, originalIndent+strings.Repeat(" ", int(indentAmount))+strings.TrimLeft(line, " \t"))
+	}
+
+	return result
+}
+
+func formatDiffOutput(diff string) string {
 	numBackticks := 3
 	for strings.Contains(diff, strings.Repeat("`", numBackticks)) {
 		numBackticks++
 	}
-	formattedDiff := fmt.Sprintf("%s\ndiff\n%s%s\n\n",
+	return fmt.Sprintf("%s\ndiff\n%s%s\n\n",
 		strings.Repeat("`", numBackticks),
 		diff,
 		strings.Repeat("`", numBackticks))
-
-	// Write changes if not dry run
-	if !dryRun {
-		if err := os.WriteFile(filePath, []byte(modifiedContent), 0600); err != nil {
-			return "", fmt.Errorf("failed to write file: %w", err)
-		}
-	}
-
-	return formattedDiff, nil
 }
 
 func getLeadingWhitespace(s string) string {
