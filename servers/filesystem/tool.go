@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/MegaGrindStone/go-mcp"
@@ -153,33 +154,50 @@ func readMultipleFiles(rootPaths []string, params mcp.CallToolParams) (mcp.CallT
 		return mcp.CallToolResult{}, err
 	}
 
-	var result []mcp.Content
+	resultChan := make(chan mcp.Content, len(rmfParams.Paths))
+	var wg sync.WaitGroup
 
 	for _, path := range rmfParams.Paths {
-		validPath, err := validatePath(path, rootPaths)
-		if err != nil {
-			result = append(result, mcp.Content{
+		wg.Add(1)
+		go func(p string) {
+			defer wg.Done()
+
+			validPath, err := validatePath(p, rootPaths)
+			if err != nil {
+				resultChan <- mcp.Content{
+					Type: mcp.ContentTypeText,
+					Text: fmt.Sprintf("failed to validate path %s: %s", p, err),
+				}
+				return
+			}
+
+			bs, err := os.ReadFile(validPath)
+			if err != nil {
+				resultChan <- mcp.Content{
+					Type: mcp.ContentTypeText,
+					Text: fmt.Sprintf("failed to read file with path %s: %s", p, err),
+				}
+				return
+			}
+
+			content := fmt.Sprintf("File content of %s:\n%s\n", p, string(bs))
+			resultChan <- mcp.Content{
 				Type: mcp.ContentTypeText,
-				Text: fmt.Sprintf("failed to validate path %s: %s", path, err),
-			})
-			continue
-		}
+				Text: content,
+			}
+		}(path)
+	}
 
-		bs, err := os.ReadFile(validPath)
-		if err != nil {
-			result = append(result, mcp.Content{
-				Type: mcp.ContentTypeText,
-				Text: fmt.Sprintf("failed to read file with path %s: %s", path, err),
-			})
-			continue
-		}
+	// Wait in a separate goroutine and close the channel when done
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
 
-		content := fmt.Sprintf("File content of %s:\n%s\n", path, string(bs))
-
-		result = append(result, mcp.Content{
-			Type: mcp.ContentTypeText,
-			Text: content,
-		})
+	// Collect results
+	var result []mcp.Content
+	for content := range resultChan {
+		result = append(result, content)
 	}
 
 	return mcp.CallToolResult{
