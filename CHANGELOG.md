@@ -5,18 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.5.1] - 2025-02-17
 
 ### Added
 
-- Test for `filesystem` server.
+- Add comprehensive test suite for `filesystem` server implementation to ensure reliability and correctness.
 
 ### Changed
 
-- Improve `filesystem` server for better compatibility with the official implementation.
-- Improve error message in `JSONRPCError` struct.
-- Set message in `JSONRPCError` struct to string representation instead of generic "Internal error", except for `CallTool` request which returns `CallToolResult` with `IsError` set to true and the error setted as the content.
-- Skip `.git` directory in `directory_tree` call tool request at `filesystem` server.
+- Enhance filesystem server compatibility with official MCP implementation.
+- Improve error message clarity in JSONRPCError struct for better debugging.
+- Implement detailed error string representation in JSONRPCError struct, replacing generic "Internal error" messages.
+- Add specific error handling for CallTool requests with dedicated CallToolResult error reporting.
+- Exclude .git directory from directory_tree tool results to improve relevance of `filesystem` operations.
 
 ## [0.5.0] - 2025-02-09
 
