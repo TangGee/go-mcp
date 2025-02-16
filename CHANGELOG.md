@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Test for `filesystem` server.
+
 ### Changed
 
 - Improve `filesystem` server for better compatibility with the official implementation.
