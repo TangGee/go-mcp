@@ -397,12 +397,21 @@ func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
 	return func(yield func(JSONRPCMessage) bool) {
 		defer close(s.receivedClosed)
 
-		for msg := range s.receivedMsgs {
-			if !yield(msg) {
+		for {
+			select {
+			case msg := <-s.receivedMsgs:
+				if !yield(msg) {
+					return
+				}
+			case <-s.done:
 				return
 			}
 		}
 	}
+}
+
+func (s sseServerSession) Interrupt() {
+	s.close()
 }
 
 func (s sseServerSession) start() {

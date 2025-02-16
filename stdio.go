@@ -31,6 +31,8 @@ type stdIOSession struct {
 	reader io.Reader
 	writer io.Writer
 	logger *slog.Logger
+
+	done chan struct{}
 }
 
 // NewStdIO creates a new StdIO instance configured with the provided reader and writer.
@@ -101,6 +103,8 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 		return ctx.Err()
 	case err := <-errs:
 		return err
+	case <-s.done:
+		return nil
 	}
 }
 
@@ -109,22 +113,45 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 		// Use bufio.Reader instead of bufio.Scanner to avoid max token size errors.
 		reader := bufio.NewReader(s.reader)
 		for {
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if errors.Is(err, io.EOF) {
+			type lineWithErr struct {
+				line string
+				err  error
+			}
+
+			lines := make(chan lineWithErr)
+
+			// We use goroutines to avoid blocking on slow readers, so we can listen
+			// to done channel and return if needed.
+			go func() {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					lines <- lineWithErr{err: err}
 					return
 				}
-				s.logger.Error("failed to read message", "err", err)
+				lines <- lineWithErr{line: strings.TrimSuffix(line, "\n")}
+			}()
+
+			var lwe lineWithErr
+			select {
+			case <-s.done:
+				return
+			case lwe = <-lines:
+			}
+
+			if lwe.err != nil {
+				if errors.Is(lwe.err, io.EOF) {
+					return
+				}
+				s.logger.Error("failed to read message", "err", lwe.err)
 				return
 			}
-			line = strings.TrimSuffix(line, "\n")
-			if line == "" {
+
+			if lwe.line == "" {
 				continue
 			}
 
 			var msg JSONRPCMessage
-			err = json.Unmarshal([]byte(line), &msg)
-			if err != nil {
+			if err := json.Unmarshal([]byte(lwe.line), &msg); err != nil {
 				s.logger.Error("failed to unmarshal message", "err", err)
 				continue
 			}
@@ -135,4 +162,8 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 			}
 		}
 	}
+}
+
+func (s stdIOSession) Interrupt() {
+	close(s.done)
 }

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Interrupt method for `Session` interface.
+
 ## [0.5.1] - 2025-02-17
 
 This release focuses on improving error handling and `filesystem` server compatibility. Key improvements include enhanced error messaging in the JSONRPCError struct, better `filesystem` server alignment with the official MCP implementation, and the addition of comprehensive testing. These changes significantly improve debugging capabilities and ensure more reliable `filesystem` operations.
