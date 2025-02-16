@@ -310,6 +310,12 @@ func searchFilesWithPattern(rootPath, pattern string, rootPaths, excludePatterns
 	// Channel for limiting concurrent goroutines
 	semaphore := make(chan struct{}, 50) // Limit to 50 concurrent goroutines
 
+	// Compile the search pattern
+	searchPattern, err := glob.Compile(pattern, '/')
+	if err != nil {
+		return nil, fmt.Errorf("invalid search pattern: %w", err)
+	}
+
 	// Compile exclude patterns
 	var compiledPatterns []glob.Glob
 	for _, pattern := range excludePatterns {
@@ -322,8 +328,6 @@ func searchFilesWithPattern(rootPath, pattern string, rootPaths, excludePatterns
 		}
 		compiledPatterns = append(compiledPatterns, compiled)
 	}
-
-	searchPattern := strings.ToLower(pattern)
 
 	// Define recursive search function
 	var search func(currentPath string) error
@@ -365,7 +369,7 @@ func searchFilesWithPattern(rootPath, pattern string, rootPaths, excludePatterns
 				continue
 			}
 
-			if strings.Contains(strings.ToLower(entry.Name()), searchPattern) {
+			if searchPattern.Match(entry.Name()) {
 				mu.Lock()
 				results = append(results, fullPath)
 				mu.Unlock()
@@ -386,7 +390,7 @@ func searchFilesWithPattern(rootPath, pattern string, rootPaths, excludePatterns
 
 	// Start initial search
 	wg.Add(1)
-	err := search(rootPath)
+	err = search(rootPath)
 	if err != nil {
 		return nil, err
 	}
