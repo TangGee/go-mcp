@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.1] - 2025-02-17
 
+This release focuses on improving error handling and `filesystem` server compatibility. Key improvements include enhanced error messaging in the JSONRPCError struct, better `filesystem` server alignment with the official MCP implementation, and the addition of comprehensive testing. These changes significantly improve debugging capabilities and ensure more reliable `filesystem` operations.
+
 ### Added
 
 - Add comprehensive test suite for `filesystem` server implementation to ensure reliability and correctness.
 
 ### Changed
 
-- Enhance filesystem server compatibility with official MCP implementation.
+- Enhance `filesystem` server compatibility with official MCP implementation.
 - Improve error message clarity in JSONRPCError struct for better debugging.
 - Implement detailed error string representation in JSONRPCError struct, replacing generic "Internal error" messages.
 - Add specific error handling for CallTool requests with dedicated CallToolResult error reporting.
