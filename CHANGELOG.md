@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Interrupt method for `Session` interface.
+- Auto-close server session on ping timeout exceeds given threshold.
 
 ## [0.5.1] - 2025-02-17
 

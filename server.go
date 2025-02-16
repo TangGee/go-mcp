@@ -44,9 +44,10 @@ type server struct {
 
 	logHandler LogHandler
 
-	writeTimeout time.Duration
-	readTimeout  time.Duration
-	pingInterval time.Duration
+	writeTimeout         time.Duration
+	readTimeout          time.Duration
+	pingInterval         time.Duration
+	pingTimeoutThreshold int
 
 	initialized bool
 	logger      *slog.Logger
@@ -66,6 +67,8 @@ var (
 	defaultServerWriteTimeout = 30 * time.Second
 	defaultServerReadTimeout  = 30 * time.Second
 	defaultServerPingInterval = 30 * time.Second
+
+	defaultServerPingTimeoutThreshold = 3
 
 	errInvalidJSON = errors.New("invalid json")
 )
@@ -185,10 +188,17 @@ func WithServerReadTimeout(timeout time.Duration) ServerOption {
 }
 
 // WithServerPingInterval sets the ping interval for the server.
-// If set to 0, the server will not send pings.
 func WithServerPingInterval(interval time.Duration) ServerOption {
 	return func(s *server) {
 		s.pingInterval = interval
+	}
+}
+
+// WithServerPingTimeoutThreshold sets the ping timeout threshold for the server.
+// If the number of consecutive ping timeouts exceeds the threshold, the server will close the session.
+func WithServerPingTimeoutThreshold(threshold int) ServerOption {
+	return func(s *server) {
+		s.pingTimeoutThreshold = threshold
 	}
 }
 
@@ -218,6 +228,9 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 	}
 	if s.pingInterval == 0 {
 		s.pingInterval = defaultServerPingInterval
+	}
+	if s.pingTimeoutThreshold == 0 {
+		s.pingTimeoutThreshold = defaultServerPingTimeoutThreshold
 	}
 
 	// Prepares the server's capabilities based on the provided server implementations.
@@ -288,6 +301,7 @@ func (s server) listenSessions() {
 		go func(sessID string) {
 			pingTicker := time.NewTicker(s.pingInterval)
 
+			failedPings := 0
 			for {
 				select {
 				case <-s.done:
@@ -295,7 +309,18 @@ func (s server) listenSessions() {
 				case <-done:
 					s.stopSessions <- sessID
 				case <-pingTicker.C:
-					s.ping(sessID)
+					err := s.ping(sessID)
+					if err == nil {
+						continue
+					}
+					failedPings++
+					s.logger.Error("failed to send ping", "err", err, "failedPings", failedPings)
+					if failedPings <= s.pingTimeoutThreshold {
+						continue
+					}
+					s.logger.Error("too many ping failures, closing session", "failedPings", failedPings)
+					s.stopSessions <- sessID
+					return
 				}
 			}
 		}(sess.ID())
@@ -320,6 +345,11 @@ func (s server) start(ctx context.Context) {
 		case sess := <-s.startSessions:
 			sessions[sess.ID()] = sess
 		case sessID := <-s.stopSessions:
+			sess, ok := sessions[sessID]
+			if !ok {
+				continue
+			}
+			sess.Interrupt()
 			delete(sessions, sessID)
 		case sessMsg := <-s.sessionMessages:
 			sess, ok := sessions[sessMsg.sessionID]
@@ -372,7 +402,7 @@ func (s server) start(ctx context.Context) {
 	}
 }
 
-func (s server) ping(sessID string) {
+func (s server) ping(sessID string) error {
 	msg := JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		ID:      MustString(uuid.New().String()),
@@ -382,12 +412,12 @@ func (s server) ping(sessID string) {
 	requester := s.clientRequester(sessID)
 	res, err := requester(msg)
 	if err != nil {
-		s.logger.Error("failed to send ping", "err", err)
-		return
+		return fmt.Errorf("failed to send ping: %w", err)
 	}
 	if res.Error != nil {
-		s.logger.Error("error response", "err", res.Error)
+		return fmt.Errorf("error response: %w", res.Error)
 	}
+	return nil
 }
 
 func (s server) listenSubcribedResources() {
