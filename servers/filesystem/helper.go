@@ -52,14 +52,7 @@ func validatePath(requestedPath string, allowedDirectories []string) (string, er
 		}
 
 		// For new files that don't exist yet, verify parent directory
-		parentDir := filepath.Dir(absolute)
-		realParentPath, err := filepath.EvalSymlinks(parentDir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return "", fmt.Errorf("access denied - parent directory %s does not exist", parentDir)
-			}
-			return "", err
-		}
+		realParentPath := filepath.Dir(absolute)
 
 		// Check if parent directory is within allowed directories
 		normalizedParent := filepath.Clean(realParentPath)
@@ -72,7 +65,7 @@ func validatePath(requestedPath string, allowedDirectories []string) (string, er
 		}
 		if !isParentAllowed {
 			return "", fmt.Errorf("access denied - parent directory %s outside allowed directories %s",
-				parentDir, strings.Join(allowedDirectories, ", "))
+				realParentPath, strings.Join(allowedDirectories, ", "))
 		}
 
 		return absolute, nil
