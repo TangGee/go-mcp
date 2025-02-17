@@ -32,7 +32,8 @@ type SSEServer struct {
 
 	addSessions     chan sseServerSession
 	sessions        chan sseServerSession
-	removeSessions  chan sseServerSessionRemoval
+	stopSessions    chan string
+	removeSessions  chan string
 	sessionMessages chan sessionMsg
 	done            chan struct{}
 	closed          chan struct{}
@@ -58,18 +59,13 @@ type sseServerSession struct {
 	receivedMsgs chan JSONRPCMessage
 
 	done           chan struct{}
-	sentClosed     chan struct{}
+	closed         chan struct{}
 	receivedClosed chan struct{}
 }
 
 type sseServerSessionSendMsg struct {
 	msg  *sse.Message
 	errs chan<- error
-}
-
-type sseServerSessionRemoval struct {
-	sessID string
-	done   chan<- struct{}
 }
 
 // NewSSEServer creates and initializes a new SSE server that listens for client connections
@@ -82,7 +78,8 @@ func NewSSEServer(messageURL string) SSEServer {
 		logger:          slog.Default(),
 		addSessions:     make(chan sseServerSession),
 		sessions:        make(chan sseServerSession, 5),
-		removeSessions:  make(chan sseServerSessionRemoval),
+		stopSessions:    make(chan string),
+		removeSessions:  make(chan string),
 		sessionMessages: make(chan sessionMsg),
 		done:            make(chan struct{}),
 		closed:          make(chan struct{}),
@@ -117,6 +114,14 @@ func (s SSEServer) Sessions() iter.Seq[Session] {
 				return
 			}
 		}
+	}
+}
+
+// StopSession stops the session with the given ID.
+func (s SSEServer) StopSession(sessID string) {
+	select {
+	case s.stopSessions <- sessID:
+	case <-s.done:
 	}
 }
 
@@ -161,17 +166,16 @@ func (s SSEServer) HandleSSE() http.Handler {
 			sendMsgs:       make(chan sseServerSessionSendMsg),
 			receivedMsgs:   make(chan JSONRPCMessage, 5),
 			done:           make(chan struct{}),
-			sentClosed:     make(chan struct{}),
+			closed:         make(chan struct{}),
 			receivedClosed: make(chan struct{}),
 		}
 
 		<-r.Context().Done()
-		removeDone := make(chan struct{})
-		s.removeSessions <- sseServerSessionRemoval{
-			sessID: sessID,
-			done:   removeDone,
+
+		select {
+		case s.removeSessions <- sessID:
+		case <-s.done:
 		}
-		<-removeDone
 	})
 }
 
@@ -276,12 +280,6 @@ func (s SSEServer) listen() {
 	for {
 		select {
 		case <-s.done:
-			// We close the sessions channel first to prevent new iterations
-			// before cleaning up existing sessions
-			close(s.sessions)
-			for _, sess := range sessions {
-				sess.close()
-			}
 			return
 		case sess := <-s.addSessions:
 			// We start the session handler goroutine before adding it to the map
@@ -289,16 +287,15 @@ func (s SSEServer) listen() {
 			go sess.start()
 			sessions[sess.id] = sess
 			s.sessions <- sess
-		case removal := <-s.removeSessions:
-			sess, ok := sessions[removal.sessID]
+		case sessID := <-s.stopSessions:
+			sess, ok := sessions[sessID]
 			if !ok {
 				continue
 			}
-			// We close the session before removing it from the map to ensure
-			// proper cleanup of resources
-			sess.close()
-			delete(sessions, removal.sessID)
-			removal.done <- struct{}{}
+			sess.stop()
+			delete(sessions, sessID)
+		case sessID := <-s.removeSessions:
+			delete(sessions, sessID)
 		case sessMsg := <-s.sessionMessages:
 			sess, ok := sessions[sessMsg.sessionID]
 			if !ok {
@@ -410,12 +407,8 @@ func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
 	}
 }
 
-func (s sseServerSession) Interrupt() {
-	s.close()
-}
-
 func (s sseServerSession) start() {
-	defer close(s.sentClosed)
+	defer close(s.closed)
 
 	for {
 		select {
@@ -435,14 +428,10 @@ func (s sseServerSession) start() {
 	}
 }
 
-func (s sseServerSession) close() {
-	// We use a specific order for channel closure to prevent deadlocks:
-	// 1. Signal termination via done channel
-	// 2. Close message receiving
-	// 3. Wait for send/receive goroutines to finish
+func (s sseServerSession) stop() {
 	close(s.done)
 	close(s.receivedMsgs)
 
-	<-s.sentClosed
+	<-s.closed
 	<-s.receivedClosed
 }

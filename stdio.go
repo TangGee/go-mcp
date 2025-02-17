@@ -44,6 +44,7 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 			reader: reader,
 			writer: writer,
 			logger: slog.Default(),
+			done:   make(chan struct{}),
 		},
 	}
 }
@@ -54,6 +55,13 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 func (s StdIO) Sessions() iter.Seq[Session] {
 	return func(yield func(Session) bool) {
 		yield(s.sess)
+	}
+}
+
+// StopSession stops the session with the given ID.
+func (s StdIO) StopSession(sessID string) {
+	if sessID == "1" {
+		s.sess.stop()
 	}
 }
 
@@ -164,6 +172,6 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	}
 }
 
-func (s stdIOSession) Interrupt() {
+func (s stdIOSession) stop() {
 	close(s.done)
 }

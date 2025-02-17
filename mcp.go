@@ -12,6 +12,9 @@ type ServerTransport interface {
 	// bidirectional communication. The implementation must guarantee that each session ID
 	// is unique across all active connections.
 	Sessions() iter.Seq[Session]
+
+	// StopSession stops the session with the given ID.
+	StopSession(sessID string)
 }
 
 // ClientTransport provides the client-side communication layer in the MCP protocol.
@@ -43,11 +46,8 @@ type Session interface {
 	Send(ctx context.Context, msg JSONRPCMessage) error
 
 	// Messages returns an iterator that yields messages received from the client.
-	// The implementations should exit the iteration if the session is closed or interrupted.
+	// The implementations should exit the iteration if the session is closed.
 	Messages() iter.Seq[JSONRPCMessage]
-
-	// Interrupt interrupts the session and terminates all active operations.
-	Interrupt()
 }
 
 // Server interfaces

@@ -60,7 +60,14 @@ type server struct {
 	results         chan JSONRPCMessage
 	registerCancels chan cancelRequest
 	cancelRequests  chan string
-	done            chan struct{}
+
+	done                          chan struct{}
+	listenSessionsDone            chan struct{}
+	listenSubscribedResourcesDone chan struct{}
+	listenLogsDone                chan struct{}
+	listenPromptsUpdatesDone      chan struct{}
+	listenResourcesUpdatesDone    chan struct{}
+	listenToolsUpdatesDone        chan struct{}
 }
 
 var (
@@ -84,17 +91,30 @@ var (
 // a graceful shutdown by closing all active sessions and cleaning up resources.
 func Serve(ctx context.Context, server Server, transport ServerTransport, options ...ServerOption) {
 	s := newServer(server, transport, options...)
+
+	// Only listen for updates if the server implements the updater interfaces. And if it doesn't, we need
+	// to close the corresponding done channel to prevent deadlocks when the start function is done.
+
 	if s.promptListUpdater != nil {
-		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates())
+		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates(),
+			s.listenPromptsUpdatesDone)
+	} else {
+		close(s.listenPromptsUpdatesDone)
 	}
 	if s.resourceListUpdater != nil {
-		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates())
+		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates(),
+			s.listenResourcesUpdatesDone)
+	} else {
+		close(s.listenResourcesUpdatesDone)
 	}
 	if s.resourceSubscriptionHandler != nil {
 		go s.listenSubcribedResources()
 	}
 	if s.toolListUpdater != nil {
-		go s.listenUpdates(methodNotificationsToolsListChanged, s.toolListUpdater.ToolListUpdates())
+		go s.listenUpdates(methodNotificationsToolsListChanged, s.toolListUpdater.ToolListUpdates(),
+			s.listenToolsUpdatesDone)
+	} else {
+		close(s.listenToolsUpdatesDone)
 	}
 	if s.logHandler != nil {
 		go s.listenLogs()
@@ -204,18 +224,24 @@ func WithServerPingTimeoutThreshold(threshold int) ServerOption {
 
 func newServer(srv Server, transport ServerTransport, options ...ServerOption) server {
 	s := server{
-		Server:          srv,
-		transport:       transport,
-		logger:          slog.Default(),
-		startSessions:   make(chan Session),
-		stopSessions:    make(chan string),
-		sessionMessages: make(chan sessionMsg),
-		broadcasts:      make(chan JSONRPCMessage),
-		waitForResults:  make(chan waitForResultReq),
-		results:         make(chan JSONRPCMessage),
-		registerCancels: make(chan cancelRequest),
-		cancelRequests:  make(chan string),
-		done:            make(chan struct{}),
+		Server:                        srv,
+		transport:                     transport,
+		logger:                        slog.Default(),
+		startSessions:                 make(chan Session),
+		stopSessions:                  make(chan string),
+		sessionMessages:               make(chan sessionMsg),
+		broadcasts:                    make(chan JSONRPCMessage),
+		waitForResults:                make(chan waitForResultReq),
+		results:                       make(chan JSONRPCMessage),
+		registerCancels:               make(chan cancelRequest),
+		cancelRequests:                make(chan string),
+		done:                          make(chan struct{}),
+		listenSessionsDone:            make(chan struct{}),
+		listenSubscribedResourcesDone: make(chan struct{}),
+		listenLogsDone:                make(chan struct{}),
+		listenPromptsUpdatesDone:      make(chan struct{}),
+		listenResourcesUpdatesDone:    make(chan struct{}),
+		listenToolsUpdatesDone:        make(chan struct{}),
 	}
 	for _, opt := range options {
 		opt(&s)
@@ -280,76 +306,41 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 	return s
 }
 
-func (s server) listenSessions() {
-	// We maintain a continuous loop to handle new client sessions and their lifecycle
-	for sess := range s.transport.Sessions() {
-		select {
-		case <-s.done:
-			return
-		case s.startSessions <- sess:
-		}
-
-		done := make(chan struct{})
-		// We spawn a goroutine to handle messages for this session
-		go func() {
-			s.listenMessages(sess.ID(), sess.Messages())
-			close(done)
-		}()
-
-		// We spawn a separate goroutine for session management and ping handling
-		// This ensures each session maintains its own heartbeat independently
-		go func(sessID string) {
-			pingTicker := time.NewTicker(s.pingInterval)
-
-			failedPings := 0
-			for {
-				select {
-				case <-s.done:
-					return
-				case <-done:
-					s.stopSessions <- sessID
-				case <-pingTicker.C:
-					err := s.ping(sessID)
-					if err == nil {
-						continue
-					}
-					failedPings++
-					s.logger.Error("failed to send ping", "err", err, "failedPings", failedPings)
-					if failedPings <= s.pingTimeoutThreshold {
-						continue
-					}
-					s.logger.Error("too many ping failures, closing session", "failedPings", failedPings)
-					s.stopSessions <- sessID
-					return
-				}
-			}
-		}(sess.ID())
-	}
-}
-
 func (s server) start(ctx context.Context) {
 	// We maintain three core maps for session state management:
 	// - sessions: tracks active client sessions
 	// - waitForResults: correlates message IDs with their response channels
 	// - cancels: stores cancellation functions for ongoing operations
-	sessions := make(map[string]Session)                   // map[sessionID]context
+	sessions := make(map[string]Session)                   // map[sessionID]Session
 	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
 	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
+
+	defer func() {
+		// Stop all active sessions and clean up resources before exiting
+
+		for sessID := range sessions {
+			s.transport.StopSession(sessID)
+		}
+
+		close(s.done)
+
+		<-s.listenSessionsDone
+		<-s.listenSubscribedResourcesDone
+		<-s.listenLogsDone
+		<-s.listenPromptsUpdatesDone
+		<-s.listenResourcesUpdatesDone
+		<-s.listenToolsUpdatesDone
+	}()
 
 	// Main event loop for handling various server operations
 	for {
 		select {
 		case <-ctx.Done():
-			close(s.done)
 			return
 		case sess := <-s.startSessions:
 			sessions[sess.ID()] = sess
 		case sessID := <-s.stopSessions:
-			sess, ok := sessions[sessID]
-			if !ok {
-				continue
-			}
-			sess.Interrupt()
+			s.transport.StopSession(sessID)
 			delete(sessions, sessID)
 		case sessMsg := <-s.sessionMessages:
 			sess, ok := sessions[sessMsg.sessionID]
@@ -402,6 +393,44 @@ func (s server) start(ctx context.Context) {
 	}
 }
 
+func (s server) listenSessions() {
+	defer close(s.listenSessionsDone)
+	// We maintain a continuous loop to handle new client sessions and their lifecycle
+	for sess := range s.transport.Sessions() {
+		select {
+		case <-s.done:
+			return
+		case s.startSessions <- sess:
+		}
+
+		// We spawn a goroutine to handle messages for this session
+		go s.listenMessages(sess)
+
+		// We spawn a separate goroutine for session management and ping handling
+		// This ensures each session maintains its own heartbeat independently
+		go func(sessID string) {
+			pingTicker := time.NewTicker(s.pingInterval)
+
+			failedPings := 0
+			for range pingTicker.C {
+				err := s.ping(sessID)
+				if err == nil {
+					failedPings = 0
+					continue
+				}
+				failedPings++
+				s.logger.Error("failed to send ping", "err", err, "failedPings", failedPings)
+				if failedPings <= s.pingTimeoutThreshold {
+					continue
+				}
+				s.logger.Error("too many ping failures, closing session", "failedPings", failedPings)
+				s.stopSessions <- sessID
+				return
+			}
+		}(sess.ID())
+	}
+}
+
 func (s server) ping(sessID string) error {
 	msg := JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
@@ -421,6 +450,8 @@ func (s server) ping(sessID string) error {
 }
 
 func (s server) listenSubcribedResources() {
+	defer close(s.listenSubscribedResourcesDone)
+
 	for uri := range s.resourceSubscriptionHandler.SubscribedResourceUpdates() {
 		params := notificationsResourcesUpdatedParams{
 			URI: uri,
@@ -444,6 +475,8 @@ func (s server) listenSubcribedResources() {
 }
 
 func (s server) listenLogs() {
+	defer close(s.listenLogsDone)
+
 	for params := range s.logHandler.LogStreams() {
 		paramsBs, err := json.Marshal(params)
 		if err != nil {
@@ -463,7 +496,9 @@ func (s server) listenLogs() {
 	}
 }
 
-func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
+func (s server) listenUpdates(method string, updates iter.Seq[struct{}], done chan struct{}) {
+	defer close(done)
+
 	for range updates {
 		msg := JSONRPCMessage{
 			JSONRPC: JSONRPCVersion,
@@ -477,7 +512,10 @@ func (s server) listenUpdates(method string, updates iter.Seq[struct{}]) {
 	}
 }
 
-func (s server) listenMessages(sessID string, msgs iter.Seq[JSONRPCMessage]) {
+func (s server) listenMessages(session Session) {
+	msgs := session.Messages()
+	sessID := session.ID()
+
 	for msg := range msgs {
 		// We validate JSON-RPC version before processing any message
 		if msg.JSONRPC != JSONRPCVersion {
@@ -552,6 +590,11 @@ func (s server) listenMessages(sessID string, msgs iter.Seq[JSONRPCMessage]) {
 			case s.results <- msg:
 			}
 		}
+	}
+
+	select {
+	case s.stopSessions <- sessID:
+	case <-s.done:
 	}
 }
 
