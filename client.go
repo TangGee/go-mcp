@@ -49,9 +49,10 @@ type Client struct {
 	progressListener ProgressListener
 	logReceiver      LogReceiver
 
-	writeTimeout time.Duration
-	readTimeout  time.Duration
-	pingInterval time.Duration
+	writeTimeout         time.Duration
+	readTimeout          time.Duration
+	pingInterval         time.Duration
+	pingTimeoutThreshold int
 
 	initialized bool
 	logger      *slog.Logger
@@ -66,6 +67,8 @@ var (
 	defaultClientWriteTimeout = 30 * time.Second
 	defaultClientReadTimeout  = 30 * time.Second
 	defaultClientPingInterval = 30 * time.Second
+
+	defaultClientPingTimeoutThreshold = 3
 )
 
 // WithRootsListHandler sets the roots list handler for the client.
@@ -152,6 +155,14 @@ func WithClientPingInterval(interval time.Duration) ClientOption {
 	}
 }
 
+// WithClientPingTimeoutThreshold sets the ping timeout threshold for the client.
+// If the number of consecutive ping timeouts exceeds the threshold, the client will close the session.
+func WithClientPingTimeoutThreshold(threshold int) ClientOption {
+	return func(c *Client) {
+		c.pingTimeoutThreshold = threshold
+	}
+}
+
 // NewClient creates a new Model Context Protocol (MCP) client with the specified configuration.
 // It establishes a client that can communicate with MCP servers according to the protocol
 // specification at https://spec.modelcontextprotocol.io/specification/.
@@ -175,7 +186,7 @@ func NewClient(
 		info:            info,
 		transport:       transport,
 		logger:          slog.Default(),
-		waitForResults:  make(chan waitForResultReq),
+		waitForResults:  make(chan waitForResultReq, 10),
 		results:         make(chan JSONRPCMessage),
 		registerCancels: make(chan cancelRequest),
 		cancelRequests:  make(chan string),
@@ -192,6 +203,9 @@ func NewClient(
 	}
 	if c.pingInterval == 0 {
 		c.pingInterval = defaultClientPingInterval
+	}
+	if c.pingTimeoutThreshold == 0 {
+		c.pingTimeoutThreshold = defaultClientPingTimeoutThreshold
 	}
 
 	c.capabilities = ClientCapabilities{}
@@ -726,8 +740,15 @@ func (c *Client) LoggingServerSupported() bool {
 	return c.serverCapabilities.Logging != nil
 }
 
-func (c *Client) start(ctx context.Context) {
+func (c *Client) start(ctx context.Context, errs chan<- error) {
+	defer close(errs)
+
+	if c.rootsListUpdater != nil {
+		go c.listenListRootUpdates(ctx)
+	}
+
 	pingTicker := time.NewTicker(c.pingInterval)
+	failedPings := 0
 
 	// We maintain two maps for handling request/response correlation and cancellation:
 	// - waitForResults: tracks pending requests awaiting responses
@@ -735,16 +756,21 @@ func (c *Client) start(ctx context.Context) {
 	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
 	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
 
-	if c.rootsListUpdater != nil {
-		go c.listenListRootUpdates(ctx)
-	}
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-pingTicker.C:
-			go c.ping(ctx)
+			if err := c.ping(ctx); err != nil {
+				c.logger.Error("failed to send ping", "err", err)
+				failedPings++
+				if failedPings > c.pingTimeoutThreshold {
+					errs <- fmt.Errorf("too many ping failures: %d", failedPings)
+					return
+				}
+			} else {
+				failedPings = 0
+			}
 		case req := <-c.waitForResults:
 			resChan := make(chan JSONRPCMessage)
 			waitForResults[req.msgID] = resChan
@@ -779,7 +805,7 @@ func (c Client) listenListRootUpdates(ctx context.Context) {
 	}
 }
 
-func (c *Client) ping(ctx context.Context) {
+func (c *Client) ping(ctx context.Context) error {
 	wCtx, wCancel := context.WithTimeout(ctx, c.writeTimeout)
 	defer wCancel()
 
@@ -788,12 +814,13 @@ func (c *Client) ping(ctx context.Context) {
 		Method:  methodPing,
 	})
 	if err != nil {
-		c.logger.Error("failed to send ping", "err", err)
-		return
+		return fmt.Errorf("failed to send ping: %w", err)
 	}
 	if res.Error != nil {
-		c.logger.Error("error response", "err", res.Error)
+		return fmt.Errorf("error response: %w", res.Error)
 	}
+
+	return nil
 }
 
 func (c *Client) listenMessages(
@@ -803,6 +830,8 @@ func (c *Client) listenMessages(
 	ready chan<- struct{},
 ) error {
 	defer close(ready)
+
+	startErrs := make(chan error)
 
 	for msg := range msgs {
 		if msg.JSONRPC != JSONRPCVersion {
@@ -871,7 +900,7 @@ func (c *Client) listenMessages(
 				if err := c.handleInitialize(ctx, msg); err != nil {
 					return err
 				}
-				go c.start(ctx)
+				go c.start(ctx, startErrs)
 				ready <- struct{}{}
 				continue
 			}
@@ -879,7 +908,7 @@ func (c *Client) listenMessages(
 		}
 	}
 
-	return nil
+	return <-startErrs
 }
 
 func (c *Client) sendInitialize(ctx context.Context, msgID MustString) error {
