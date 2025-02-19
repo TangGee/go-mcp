@@ -45,6 +45,10 @@ func (k knowledgeBase) loadGraph() (knowledgeGraph, error) {
 		return knowledgeGraph{}, fmt.Errorf("failed to read file %s: %w", k.memoryFilePath, err)
 	}
 
+	if len(data) == 0 {
+		return knowledgeGraph{}, nil
+	}
+
 	var items []kbItem
 	if err := json.Unmarshal(data, &items); err != nil {
 		return knowledgeGraph{}, fmt.Errorf("failed to unmarshal file %s: %w", k.memoryFilePath, err)
