@@ -7,7 +7,7 @@ type createEntitiesArgs struct {
 type entity struct {
 	Name         string   `json:"name"`
 	EntityType   string   `json:"entityType"`
-	Observations []string `json:"observation"`
+	Observations []string `json:"observations"`
 }
 
 type createRelationsArgs struct {
