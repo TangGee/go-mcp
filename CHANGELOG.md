@@ -12,10 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StopSession` method for `ServerTransport` interface.
 - Auto-close server session on ping timeout exceeds given threshold.
 - Auto-close client on ping timeout exceeds given threshold.
-- `WithServerPingTimeoutThreshold` option for server.
-- `WithClientPingTimeoutThreshold` option for client.
+- `WithServerPingTimeoutThreshold` option for `Serve` function.
+- `WithClientPingTimeoutThreshold` option for `Client` struct.
 - `memory` server implementation.
 - `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
+- `WithServerOnClientConnected` option for `Serve`.
+- `WithServerOnClientDisconnected` option for `Serve`.
 
 ## [0.5.1] - 2025-02-17
 

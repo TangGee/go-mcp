@@ -52,6 +52,9 @@ type server struct {
 	initialized bool
 	logger      *slog.Logger
 
+	onClientConnected    func(string, Info)
+	onClientDisconnected func(string)
+
 	startSessions   chan Session
 	stopSessions    chan string
 	sessionMessages chan sessionMsg
@@ -222,6 +225,25 @@ func WithServerPingTimeoutThreshold(threshold int) ServerOption {
 	}
 }
 
+// WithServerOnClientConnected sets the callback for when a client connects.
+// The callback's parameter is the ID and Info of the client.
+func WithServerOnClientConnected(onClientConnected func(string, Info)) ServerOption {
+	return func(s *server) {
+		s.onClientConnected = onClientConnected
+	}
+}
+
+// WithServerOnClientDisconnected sets the callback for when a client disconnects.
+// The callback's parameter is the ID of the client.
+// Other than being triggered by the client being disconnected, this callback would be
+// called too when the client is failed to initialize. If that the case, the client ID
+// might never been seen at onClientConnected callback.
+func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOption {
+	return func(s *server) {
+		s.onClientDisconnected = onClientDisconnected
+	}
+}
+
 func newServer(srv Server, transport ServerTransport, options ...ServerOption) server {
 	s := server{
 		Server:                        srv,
@@ -342,6 +364,9 @@ func (s server) start(ctx context.Context) {
 		case sessID := <-s.stopSessions:
 			s.transport.StopSession(sessID)
 			delete(sessions, sessID)
+			if s.onClientDisconnected != nil {
+				s.onClientDisconnected(sessID)
+			}
 		case sessMsg := <-s.sessionMessages:
 			sess, ok := sessions[sessMsg.sessionID]
 			if !ok {
@@ -612,6 +637,7 @@ func (s server) handleInitialize(
 			Message: errMsgInvalidJSON,
 			Data:    map[string]any{"error": err},
 		})
+		s.stopSessions <- sessID
 		return
 	}
 
@@ -622,6 +648,7 @@ func (s server) handleInitialize(
 			Message: errMsgUnsupportedProtocolVersion,
 			Data:    map[string]any{"error": err},
 		})
+		s.stopSessions <- sessID
 		return
 	}
 
@@ -633,6 +660,7 @@ func (s server) handleInitialize(
 				Message: errMsgInsufficientClientCapabilities,
 				Data:    map[string]any{"error": err},
 			})
+			s.stopSessions <- sessID
 			return
 		}
 		if requiredClientCap.Roots.ListChanged {
@@ -643,6 +671,7 @@ func (s server) handleInitialize(
 					Message: errMsgInsufficientClientCapabilities,
 					Data:    map[string]any{"error": err},
 				})
+				s.stopSessions <- sessID
 				return
 			}
 		}
@@ -656,6 +685,7 @@ func (s server) handleInitialize(
 				Message: errMsgInsufficientClientCapabilities,
 				Data:    map[string]any{"error": err},
 			})
+			s.stopSessions <- sessID
 			return
 		}
 	}
@@ -666,6 +696,9 @@ func (s server) handleInitialize(
 		ServerInfo:      serverInfo,
 		Instructions:    s.instructions,
 	})
+	if s.onClientConnected != nil {
+		s.onClientConnected(sessID, params.ClientInfo)
+	}
 }
 
 func (s server) handleListPrompts(sessID string, msg JSONRPCMessage) {
