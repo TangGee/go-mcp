@@ -477,10 +477,7 @@ func TestSSELargeMessagePayload(t *testing.T) {
 			// Generate random payload
 			// This payload is required to be JSON message, instead of fully random bytes, because we want to test the
 			// handling of the message payload in the server, not failing on unmarshalling the JSON.
-			payload, err := generateRandomJSON(size)
-			if err != nil {
-				t.Fatalf("Failed to generate random payload: %v", err)
-			}
+			payload := generateRandomJSON(size)
 
 			// Create a large message
 			largeMsg := mcp.JSONRPCMessage{
