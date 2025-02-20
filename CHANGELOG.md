@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WithServerPingTimeoutThreshold` option for server.
 - `WithClientPingTimeoutThreshold` option for client.
 - `memory` server implementation.
+- `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
 
 ## [0.5.1] - 2025-02-17
 

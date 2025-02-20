@@ -49,8 +49,13 @@ type SSEClient struct {
 	messageURL string
 	logger     *slog.Logger
 
+	maxPayloadSize int
+
 	messages chan JSONRPCMessage
 }
+
+// SSEClientOption represents the options for the SSEClient.
+type SSEClientOption func(*SSEClient)
 
 type sseServerSession struct {
 	id           string
@@ -91,16 +96,31 @@ func NewSSEServer(messageURL string) SSEServer {
 // NewSSEClient creates an SSE client that connects to the specified connectURL. The optional
 // httpClient parameter allows custom HTTP client configuration - if nil, the default HTTP
 // client is used. The client must call StartSession to begin communication.
-func NewSSEClient(connectURL string, httpClient *http.Client) *SSEClient {
+func NewSSEClient(connectURL string, httpClient *http.Client, options ...SSEClientOption) *SSEClient {
 	cli := httpClient
 	if cli == nil {
 		cli = http.DefaultClient
 	}
-	return &SSEClient{
+	s := &SSEClient{
 		connectURL: connectURL,
 		httpClient: cli,
 		logger:     slog.Default(),
 		messages:   make(chan JSONRPCMessage),
+	}
+
+	for _, opt := range options {
+		opt(s)
+	}
+
+	return s
+}
+
+// WithSSEClientMaxPayloadSize sets the maximum size of the payload that can be received
+// from the server. If the payload size exceeds this limit, the error will be logged and
+// the client will be disconnected.
+func WithSSEClientMaxPayloadSize(size int) SSEClientOption {
+	return func(s *SSEClient) {
+		s.maxPayloadSize = size
 	}
 }
 
@@ -274,7 +294,11 @@ func (s *SSEClient) StartSession(ctx context.Context, ready chan<- error) (iter.
 func (s SSEServer) listen() {
 	defer close(s.closed)
 
-	// Track all active sessions in a map for O(1) lookup and removal
+	// Use a map for O(1) session lookup and management
+	// Benefits:
+	// - Constant-time access to sessions by ID
+	// - Easy addition and removal of sessions
+	// - Efficient tracking of active connections
 	sessions := make(map[string]sseServerSession)
 
 	for {
@@ -307,17 +331,29 @@ func (s SSEServer) listen() {
 }
 
 func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
-	defer body.Close()
+	defer func() {
+		body.Close()
+		close(s.messages)
+	}()
 
-	for ev, err := range sse.Read(body, nil) {
+	var config *sse.ReadConfig
+	if s.maxPayloadSize > 0 {
+		config = &sse.ReadConfig{
+			MaxEventSize: s.maxPayloadSize,
+		}
+	}
+
+	for ev, err := range sse.Read(body, config) {
 		if err != nil {
+			s.logger.Error("failed to read SSE message", "err", err)
 			return
 		}
 
 		switch ev.Type {
 		case "endpoint":
-			// We must receive and validate the endpoint URL before processing any messages
-			// to ensure proper message routing
+			// Validate and parse the endpoint URL to ensure secure and correct message routing.
+			// This step is critical to prevent potential security vulnerabilities and
+			// ensure that messages are sent to the correct destination.
 			u, err := url.Parse(ev.Data)
 			if err != nil {
 				ready <- fmt.Errorf("parse endpoint URL: %w", err)
@@ -330,8 +366,10 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 			s.messageURL = u.String()
 			close(ready)
 		case "message":
-			// We enforce the requirement that an endpoint URL must be received
-			// before processing any messages
+			// Enforce strict message processing:
+			// 1. Require an endpoint URL to be set before processing any messages
+			// 2. Prevents processing messages before connection is fully established
+			// 3. Provides an additional layer of connection state validation
 			if s.messageURL == "" {
 				s.logger.Error("received message before endpoint URL")
 				continue
@@ -410,6 +448,12 @@ func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
 func (s sseServerSession) start() {
 	defer close(s.closed)
 
+	// Continuous message sending loop with error handling
+	// Responsibilities:
+	// 1. Receive messages to send via sendMsgs channel
+	// 2. Send messages through SSE session
+	// 3. Flush messages to ensure immediate transmission
+	// 4. Propagate any sending or flushing errors back to the caller
 	for {
 		select {
 		case sm := <-s.sendMsgs:
