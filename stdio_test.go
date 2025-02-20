@@ -256,3 +256,195 @@ func TestStdIOLargeMessagePayload(t *testing.T) {
 		})
 	}
 }
+
+func TestStdIOMalformedJSONHandling(t *testing.T) {
+	// Create buffered pipes to simulate stdin/stdout
+	clientReader, serverWriter := io.Pipe()
+	serverReader, clientWriter := io.Pipe()
+
+	// Create StdIO instances
+	_ = mcp.NewStdIO(serverReader, serverWriter)
+	clientTransport := mcp.NewStdIO(clientReader, clientWriter)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Prepare client session
+	ready := make(chan error, 1)
+	clientMsgs, err := clientTransport.StartSession(ctx, ready)
+	if err != nil {
+		t.Fatalf("failed to start client session: %v", err)
+	}
+
+	// Wait for connection readiness
+	if err := <-ready; err != nil {
+		t.Fatalf("connection not ready: %v", err)
+	}
+
+	// Test scenarios for malformed JSON
+	malformedMessages := []string{
+		`{incomplete`,                 // Incomplete JSON
+		`{"method": "test", invalid}`, // Invalid JSON syntax
+		`{"method": 123}`,             // Invalid type for method
+	}
+
+	// Verify message handling
+	receivedMsgs := 0
+	go func() {
+		for range clientMsgs {
+			receivedMsgs++
+		}
+	}()
+
+	// Send malformed messages
+	for _, msg := range malformedMessages {
+		// Write raw malformed message to simulate input
+		_, err := serverWriter.Write([]byte(msg + "\n"))
+		if err != nil {
+			t.Fatalf("Failed to write malformed message: %v", err)
+		}
+	}
+
+	// Give some time for processing
+	time.Sleep(500 * time.Millisecond)
+
+	// Ensure no valid messages were processed
+	if receivedMsgs != 0 {
+		t.Errorf("Expected 0 messages processed, got %d", receivedMsgs)
+	}
+}
+
+func TestStdIOConcurrentMessageStress(t *testing.T) {
+	// Create buffered pipes to simulate stdin/stdout
+	clientReader, serverWriter := io.Pipe()
+	serverReader, clientWriter := io.Pipe()
+
+	// Create StdIO instances
+	serverTransport := mcp.NewStdIO(serverReader, serverWriter)
+	clientTransport := mcp.NewStdIO(clientReader, clientWriter)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Prepare client session
+	ready := make(chan error, 1)
+	clientMsgs, err := clientTransport.StartSession(ctx, ready)
+	if err != nil {
+		t.Fatalf("failed to start client session: %v", err)
+	}
+
+	// Wait for connection readiness
+	if err := <-ready; err != nil {
+		t.Fatalf("connection not ready: %v", err)
+	}
+
+	// Get server session
+	var serverSession mcp.Session
+	for s := range serverTransport.Sessions() {
+		serverSession = s
+		break
+	}
+
+	// Number of concurrent messages
+	messageCount := 1000
+
+	// Synchronization primitives
+	var clientReceived, serverReceived sync.WaitGroup
+	clientReceived.Add(messageCount)
+	serverReceived.Add(messageCount)
+
+	// Track any errors during concurrent sending
+	var errorsFound sync.Map
+
+	// Goroutine for client message receiving
+	go func() {
+		for msg := range clientMsgs {
+			// Verify message content
+			if msg.Method != "concurrentTest" {
+				errorsFound.Store("client_invalid_method", fmt.Errorf("unexpected method: %s", msg.Method))
+			}
+			clientReceived.Done()
+		}
+	}()
+
+	// Goroutine for server message receiving
+	go func() {
+		for msg := range serverSession.Messages() {
+			// Verify message content
+			if msg.Method != "concurrentResponse" {
+				errorsFound.Store("server_invalid_method", fmt.Errorf("unexpected method: %s", msg.Method))
+			}
+			serverReceived.Done()
+		}
+	}()
+
+	// Concurrent message sending
+	var sendWg sync.WaitGroup
+	sendWg.Add(2)
+
+	go func() {
+		defer sendWg.Done()
+		for i := 0; i < messageCount; i++ {
+			msg := mcp.JSONRPCMessage{
+				JSONRPC: mcp.JSONRPCVersion,
+				Method:  "concurrentTest",
+				Params:  json.RawMessage(fmt.Sprintf(`{"index": %d}`, i)),
+			}
+			if err := serverSession.Send(ctx, msg); err != nil {
+				errorsFound.Store(fmt.Sprintf("server_send_%d", i), err)
+				break
+			}
+		}
+	}()
+
+	go func() {
+		defer sendWg.Done()
+		for i := 0; i < messageCount; i++ {
+			msg := mcp.JSONRPCMessage{
+				JSONRPC: mcp.JSONRPCVersion,
+				Method:  "concurrentResponse",
+				Params:  json.RawMessage(fmt.Sprintf(`{"index": %d}`, i)),
+			}
+			if err := clientTransport.Send(ctx, msg); err != nil {
+				errorsFound.Store(fmt.Sprintf("client_send_%d", i), err)
+				break
+			}
+		}
+	}()
+
+	// Wait for all sending to complete
+	sendWg.Wait()
+
+	// Wait for message processing
+	clientReceivedDone := make(chan struct{})
+	serverReceivedDone := make(chan struct{})
+
+	go func() {
+		clientReceived.Wait()
+		close(clientReceivedDone)
+	}()
+
+	go func() {
+		serverReceived.Wait()
+		close(serverReceivedDone)
+	}()
+
+	// Wait for all messages or timeout
+	select {
+	case <-clientReceivedDone:
+	case <-ctx.Done():
+		t.Fatal("Timeout waiting for client messages")
+	}
+
+	select {
+	case <-serverReceivedDone:
+	case <-ctx.Done():
+		t.Fatal("Timeout waiting for server messages")
+	}
+
+	// Check for any errors during concurrent processing
+	errorsFound.Range(func(key, value interface{}) bool {
+		t.Errorf("Error during concurrent test: %s - %v", key, value)
+		return true
+	})
+}
