@@ -11,10 +11,14 @@ type ServerTransport interface {
 	// Each yielded Session represents a unique client connection and provides methods for
 	// bidirectional communication. The implementation must guarantee that each session ID
 	// is unique across all active connections.
+	//
+	// The implementation should exit the iteration when the Shutdown method is called.
 	Sessions() iter.Seq[Session]
 
-	// StopSession stops the session with the given ID.
-	StopSession(sessID string)
+	// Shutdown gracefully shuts down the ServerTransport to clean up resources. The implementations should not
+	// close all the Session it produce, the caller would already do that when callling this method. The caller
+	// is guaranteed to call this method only once.
+	Shutdown(ctx context.Context) error
 }
 
 // ClientTransport provides the client-side communication layer in the MCP protocol.
@@ -40,14 +44,17 @@ type Session interface {
 	// the ServerTransport.
 	ID() string
 
-	// Send transmits a message to the client. The implementation should cancel
-	// operations if the context is canceled and return appropriate errors for
-	// transmission failures.
-	Send(ctx context.Context, msg JSONRPCMessage) error
+	// Send transmits a message to the client.
+	Send(msg JSONRPCMessage) error
 
 	// Messages returns an iterator that yields messages received from the client.
 	// The implementations should exit the iteration if the session is closed.
 	Messages() iter.Seq[JSONRPCMessage]
+
+	// Stop stops the session.
+	// The implementation should not called this, as the caller is guaranteed to call
+	// this method once.
+	Stop()
 }
 
 // Server interfaces
@@ -339,9 +346,4 @@ type waitForResultReq struct {
 type cancelRequest struct {
 	msgID   string
 	ctxChan chan<- context.Context
-}
-
-type sessionMsg struct {
-	sessionID string
-	msg       JSONRPCMessage
 }

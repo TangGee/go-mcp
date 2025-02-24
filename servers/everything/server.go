@@ -51,24 +51,6 @@ func NewServer() *Server {
 	return s
 }
 
-// Info implements mcp.Server interface.
-func (s Server) Info() mcp.Info {
-	return mcp.Info{
-		Name:    "everything",
-		Version: "1.0",
-	}
-}
-
-// RequireRootsListClient implements mcp.Server interface.
-func (s Server) RequireRootsListClient() bool {
-	return false
-}
-
-// RequireSamplingClient implements mcp.Server interface.
-func (s Server) RequireSamplingClient() bool {
-	return true
-}
-
 // Close closes the SSEServer and stops all background tasks.
 func (s Server) Close() {
 	close(s.done)

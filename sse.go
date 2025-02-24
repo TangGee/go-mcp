@@ -30,13 +30,12 @@ type SSEServer struct {
 	messageURL string
 	logger     *slog.Logger
 
-	addSessions     chan sseServerSession
-	sessions        chan sseServerSession
-	stopSessions    chan string
-	removeSessions  chan string
-	sessionMessages chan sessionMsg
-	done            chan struct{}
-	closed          chan struct{}
+	sessions         chan sseServerSession
+	removedSessions  chan string
+	receivedMessages chan sseSessionMessage
+
+	done   chan struct{}
+	closed chan struct{}
 }
 
 // SSEClient implements a Server-Sent Events (SSE) client that manages server connections
@@ -62,10 +61,16 @@ type sseServerSession struct {
 	sess         *sse.Session
 	sendMsgs     chan sseServerSessionSendMsg
 	receivedMsgs chan JSONRPCMessage
+	logger       *slog.Logger
 
 	done           chan struct{}
-	closed         chan struct{}
+	sendClosed     chan struct{}
 	receivedClosed chan struct{}
+}
+
+type sseSessionMessage struct {
+	sessID string
+	msg    JSONRPCMessage
 }
 
 type sseServerSessionSendMsg struct {
@@ -78,19 +83,15 @@ type sseServerSessionSendMsg struct {
 // initialized internal channels for session and message management. The returned SSEServer
 // must be closed using Close when no longer needed.
 func NewSSEServer(messageURL string) SSEServer {
-	s := SSEServer{
-		messageURL:      messageURL,
-		logger:          slog.Default(),
-		addSessions:     make(chan sseServerSession),
-		sessions:        make(chan sseServerSession, 5),
-		stopSessions:    make(chan string),
-		removeSessions:  make(chan string),
-		sessionMessages: make(chan sessionMsg),
-		done:            make(chan struct{}),
-		closed:          make(chan struct{}),
+	return SSEServer{
+		messageURL:       messageURL,
+		logger:           slog.Default(),
+		sessions:         make(chan sseServerSession, 5),
+		removedSessions:  make(chan string),
+		receivedMessages: make(chan sseSessionMessage),
+		done:             make(chan struct{}),
+		closed:           make(chan struct{}),
 	}
-	go s.listen()
-	return s
 }
 
 // NewSSEClient creates an SSE client that connects to the specified connectURL. The optional
@@ -129,20 +130,63 @@ func WithSSEClientMaxPayloadSize(size int) SSEClientOption {
 // interact with connected clients through the Session interface.
 func (s SSEServer) Sessions() iter.Seq[Session] {
 	return func(yield func(Session) bool) {
-		for sess := range s.sessions {
-			if !yield(sess) {
+		defer close(s.closed)
+
+		// Store all active sessions in a map for easy lookup when we receive a new message.
+		sessionsMap := make(map[string]sseServerSession)
+
+		for {
+			select {
+			case <-s.done:
 				return
+			case sess := <-s.sessions:
+				// Received a new session from handler.
+
+				// Process send messages for this session in a separate goroutine
+				go sess.processSendMessages()
+
+				// Store the session in the map.
+				sessionsMap[sess.id] = sess
+
+				// Forward the session to the caller.
+				if !yield(sess) {
+					return
+				}
+			case sessID := <-s.removedSessions:
+				// Received a session ID to remove from the sessions map.
+				delete(sessionsMap, sessID)
+			case msg := <-s.receivedMessages:
+				session, ok := sessionsMap[msg.sessID]
+				if !ok {
+					// Ignore the message if the session is not found, it might already be closed.
+					continue
+				}
+
+				// Forward the message to the session.
+				select {
+				case <-s.done:
+					return
+				case session.receivedMsgs <- msg.msg:
+				}
 			}
 		}
 	}
 }
 
-// StopSession stops the session with the given ID.
-func (s SSEServer) StopSession(sessID string) {
+// Shutdown gracefully shuts down the SSE server by terminating all active client
+// connections and cleaning up internal resources. This method blocks until shutdown
+// is complete.
+func (s SSEServer) Shutdown(ctx context.Context) error {
+	// Signal the server to shutdown.
+	close(s.done)
+
+	// Wait for main loop to finish.
 	select {
-	case s.stopSessions <- sessID:
-	case <-s.done:
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close SSE server: %w", ctx.Err())
+	case <-s.closed:
 	}
+	return nil
 }
 
 // HandleSSE returns an http.Handler for managing SSE connections over GET requests.
@@ -151,6 +195,7 @@ func (s SSEServer) StopSession(sessID string) {
 // either the client disconnects or the server closes.
 func (s SSEServer) HandleSSE() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Received the request to establish a new SSE session.
 		sess, err := sse.Upgrade(w, r)
 		if err != nil {
 			nErr := fmt.Errorf("failed to upgrade session: %w", err)
@@ -161,7 +206,10 @@ func (s SSEServer) HandleSSE() http.Handler {
 
 		sessID := uuid.New().String()
 
+		// Form an url for the client that can be used to communicate with the server session.
 		url := fmt.Sprintf("%s?sessionID=%s", s.messageURL, sessID)
+
+		// Use the type "endpoint" to indicate the endpoint URL.
 		msg := sse.Message{
 			Type: sse.Type("endpoint"),
 		}
@@ -180,20 +228,27 @@ func (s SSEServer) HandleSSE() http.Handler {
 			return
 		}
 
-		s.addSessions <- sseServerSession{
+		srvSession := sseServerSession{
 			id:             sessID,
 			sess:           sess,
-			sendMsgs:       make(chan sseServerSessionSendMsg),
+			logger:         s.logger,
+			sendMsgs:       make(chan sseServerSessionSendMsg, 5),
 			receivedMsgs:   make(chan JSONRPCMessage, 5),
 			done:           make(chan struct{}),
-			closed:         make(chan struct{}),
+			sendClosed:     make(chan struct{}),
 			receivedClosed: make(chan struct{}),
 		}
 
-		<-r.Context().Done()
+		// Feed the sessions channel that would be consumed in Sessions loop, so it can be fowarded to caller.
+		s.sessions <- srvSession
 
+		// Block until the session is closed, so the connection is left open.
+		<-srvSession.sendClosed
+		<-srvSession.receivedClosed
+
+		// Notify the main loop that this session is closed.
 		select {
-		case s.removeSessions <- sessID:
+		case s.removedSessions <- sessID:
 		case <-s.done:
 		}
 	})
@@ -205,10 +260,11 @@ func (s SSEServer) HandleSSE() http.Handler {
 // accessible through the Sessions iterator.
 func (s SSEServer) HandleMessage() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Received a requuest form client to one of our sessions.
 		sessID := r.URL.Query().Get("sessionID")
 		if sessID == "" {
 			nErr := fmt.Errorf("missing sessionID query parameter")
-			s.logger.Error("missing sessionID query parameter", "err", nErr)
+			s.logger.Warn("missing sessionID query parameter", slog.String("err", nErr.Error()))
 			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
@@ -218,21 +274,18 @@ func (s SSEServer) HandleMessage() http.Handler {
 
 		if err := decoder.Decode(&msg); err != nil {
 			nErr := fmt.Errorf("failed to decode message: %w", err)
-			s.logger.Error("failed to decode message", "err", nErr)
+			s.logger.Warn("failed to decode message", slog.String("err", nErr.Error()))
 			http.Error(w, nErr.Error(), http.StatusBadRequest)
 			return
 		}
 
-		s.sessionMessages <- sessionMsg{sessionID: sessID, msg: msg}
+		// Feed the receivedMessages channel so the Sessions loop can route it to the correct session.
+		select {
+		case <-s.done:
+			return
+		case s.receivedMessages <- sseSessionMessage{sessID: sessID, msg: msg}:
+		}
 	})
-}
-
-// Close gracefully shuts down the SSE server by terminating all active client
-// connections and cleaning up internal resources. This method blocks until shutdown
-// is complete.
-func (s SSEServer) Close() {
-	close(s.done)
-	<-s.closed
 }
 
 // Send transmits a JSON-encoded message to the server through an HTTP POST request. The
@@ -291,45 +344,6 @@ func (s *SSEClient) StartSession(ctx context.Context, ready chan<- error) (iter.
 	return s.listenMessages(), nil
 }
 
-func (s SSEServer) listen() {
-	defer close(s.closed)
-
-	// Use a map for O(1) session lookup and management
-	// Benefits:
-	// - Constant-time access to sessions by ID
-	// - Easy addition and removal of sessions
-	// - Efficient tracking of active connections
-	sessions := make(map[string]sseServerSession)
-
-	for {
-		select {
-		case <-s.done:
-			return
-		case sess := <-s.addSessions:
-			// We start the session handler goroutine before adding it to the map
-			// to ensure message processing begins immediately
-			go sess.start()
-			sessions[sess.id] = sess
-			s.sessions <- sess
-		case sessID := <-s.stopSessions:
-			sess, ok := sessions[sessID]
-			if !ok {
-				continue
-			}
-			sess.stop()
-			delete(sessions, sessID)
-		case sessID := <-s.removeSessions:
-			delete(sessions, sessID)
-		case sessMsg := <-s.sessionMessages:
-			sess, ok := sessions[sessMsg.sessionID]
-			if !ok {
-				continue
-			}
-			sess.receivedMsgs <- sessMsg.msg
-		}
-	}
-}
-
 func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 	defer func() {
 		body.Close()
@@ -345,7 +359,9 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 
 	for ev, err := range sse.Read(body, config) {
 		if err != nil {
-			s.logger.Error("failed to read SSE message", "err", err)
+			if !errors.Is(err, context.Canceled) {
+				s.logger.Error("failed to read SSE message", "err", err)
+			}
 			return
 		}
 
@@ -400,7 +416,7 @@ func (s *SSEClient) listenMessages() iter.Seq[JSONRPCMessage] {
 
 func (s sseServerSession) ID() string { return s.id }
 
-func (s sseServerSession) Send(ctx context.Context, msg JSONRPCMessage) error {
+func (s sseServerSession) Send(msg JSONRPCMessage) error {
 	msgBs, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -412,20 +428,23 @@ func (s sseServerSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	sseMsg.AppendData(string(msgBs))
 
 	errs := make(chan error)
-	sm := sseServerSessionSendMsg{
-		msg:  sseMsg,
-		errs: errs,
-	}
 
+	// Queue the message for sending to avoid race in the sse library
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
+	case s.sendMsgs <- sseServerSessionSendMsg{sseMsg, errs}:
 	case <-s.done:
-		return nil
-	case s.sendMsgs <- sm:
+		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
+		return fmt.Errorf("session is closed")
 	}
 
-	return <-errs
+	// Wait and return the error if any
+	select {
+	case err := <-errs:
+		return err
+	case <-s.done:
+		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
+		return fmt.Errorf("session is closed")
+	}
 }
 
 func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
@@ -445,37 +464,45 @@ func (s sseServerSession) Messages() iter.Seq[JSONRPCMessage] {
 	}
 }
 
-func (s sseServerSession) start() {
-	defer close(s.closed)
+func (s sseServerSession) Stop() {
+	close(s.done)
 
-	// Continuous message sending loop with error handling
-	// Responsibilities:
-	// 1. Receive messages to send via sendMsgs channel
-	// 2. Send messages through SSE session
-	// 3. Flush messages to ensure immediate transmission
-	// 4. Propagate any sending or flushing errors back to the caller
+	<-s.sendClosed
+	<-s.receivedClosed
+}
+
+func (s sseServerSession) processSendMessages() {
+	defer close(s.sendClosed)
+
 	for {
 		select {
 		case sm := <-s.sendMsgs:
+			// Send and flush the message to the client.
 			if err := s.sess.Send(sm.msg); err != nil {
-				sm.errs <- fmt.Errorf("failed to send message: %w", err)
+				s.logger.Warn("failed to send message", slog.String("err", err.Error()))
+
+				select {
+				case sm.errs <- err:
+				default:
+				}
 				continue
 			}
 			if err := s.sess.Flush(); err != nil {
-				sm.errs <- fmt.Errorf("failed to flush message: %w", err)
+				s.logger.Warn("failed to flush message", slog.String("err", err.Error()))
+
+				select {
+				case sm.errs <- err:
+				default:
+				}
 				continue
 			}
-			sm.errs <- nil
+
+			select {
+			case sm.errs <- nil:
+			default:
+			}
 		case <-s.done:
 			return
 		}
 	}
-}
-
-func (s sseServerSession) stop() {
-	close(s.done)
-	close(s.receivedMsgs)
-
-	<-s.closed
-	<-s.receivedClosed
 }

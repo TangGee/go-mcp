@@ -7,28 +7,29 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Server represents the main MCP server interface that users will implement.
-type Server interface {
-	Info() Info
-	RequireRootsListClient() bool
-	RequireSamplingClient() bool
-}
-
 // ServerOption represents the options for the server.
-type ServerOption func(*server)
+type ServerOption func(*Server)
 
-type server struct {
-	Server
+// Server implements a Model Context Protocol (MCP) server that enables communication
+// between LLM applications and external data sources and tools. It manages the
+// connection lifecycle, handles protocol messages, and provides access to MCP
+// server capabilities.
+type Server struct {
+	info Info
 
 	instructions               string
 	capabilities               ServerCapabilities
 	requiredClientCapabilities ClientCapabilities
 	transport                  ServerTransport
+
+	requireRootsListClient bool
+	requireSamplingClient  bool
 
 	promptServer      PromptServer
 	promptListUpdater PromptListUpdater
@@ -44,235 +45,67 @@ type server struct {
 
 	logHandler LogHandler
 
-	writeTimeout         time.Duration
-	readTimeout          time.Duration
 	pingInterval         time.Duration
 	pingTimeoutThreshold int
 
-	initialized bool
-	logger      *slog.Logger
+	logger *slog.Logger
 
 	onClientConnected    func(string, Info)
 	onClientDisconnected func(string)
 
-	startSessions   chan Session
-	stopSessions    chan string
-	sessionMessages chan sessionMsg
-	broadcasts      chan JSONRPCMessage
-	waitForResults  chan waitForResultReq
-	results         chan JSONRPCMessage
-	registerCancels chan cancelRequest
-	cancelRequests  chan string
+	sessionsWaitGroup *sync.WaitGroup
 
-	done                          chan struct{}
-	listenSessionsDone            chan struct{}
-	listenSubscribedResourcesDone chan struct{}
-	listenLogsDone                chan struct{}
-	listenPromptsUpdatesDone      chan struct{}
-	listenResourcesUpdatesDone    chan struct{}
-	listenToolsUpdatesDone        chan struct{}
+	done                     chan struct{}
+	promptListClosed         chan struct{}
+	resourceListClosed       chan struct{}
+	resourceSubscribedClosed chan struct{}
+	toolListClosed           chan struct{}
+	logClosed                chan struct{}
+}
+
+type serverSession struct {
+	session Session
+	logger  *slog.Logger
+
+	serverCap         ServerCapabilities
+	requiredClientCap ClientCapabilities
+	serverInfo        Info
+	instructions      string
+
+	pingInterval         time.Duration
+	pingTimeoutThreshold int
+
+	promptServer                PromptServer
+	resourceServer              ResourceServer
+	toolServer                  ToolServer
+	resourceSubscriptionHandler ResourceSubscriptionHandler
+	logHandler                  LogHandler
+	rootsListWatcher            RootsListWatcher
 }
 
 var (
-	defaultServerWriteTimeout = 30 * time.Second
-	defaultServerReadTimeout  = 30 * time.Second
-	defaultServerPingInterval = 30 * time.Second
-
+	defaultServerPingInterval         = 30 * time.Second
 	defaultServerPingTimeoutThreshold = 3
 
 	errInvalidJSON = errors.New("invalid json")
 )
 
-// Serve starts a Model Context Protocol (MCP) server and manages its lifecycle. It handles
-// client connections, protocol messages, and server capabilities according to the MCP specification.
-//
-// The server parameter must implement the Server interface to define core MCP capabilities
-// like prompts, resources, and tools. The transport parameter specifies how the server
-// communicates with clients (e.g., HTTP or stdio).
-//
-// Serve blocks until the provided context is cancelled, at which point it performs
-// a graceful shutdown by closing all active sessions and cleaning up resources.
-func Serve(ctx context.Context, server Server, transport ServerTransport, options ...ServerOption) {
-	s := newServer(server, transport, options...)
-
-	// Only listen for updates if the server implements the updater interfaces. And if it doesn't, we need
-	// to close the corresponding done channel to prevent deadlocks when the start function is done.
-
-	if s.promptListUpdater != nil {
-		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates(),
-			s.listenPromptsUpdatesDone)
-	} else {
-		close(s.listenPromptsUpdatesDone)
-	}
-	if s.resourceListUpdater != nil {
-		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates(),
-			s.listenResourcesUpdatesDone)
-	} else {
-		close(s.listenResourcesUpdatesDone)
-	}
-	if s.resourceSubscriptionHandler != nil {
-		go s.listenSubcribedResources()
-	}
-	if s.toolListUpdater != nil {
-		go s.listenUpdates(methodNotificationsToolsListChanged, s.toolListUpdater.ToolListUpdates(),
-			s.listenToolsUpdatesDone)
-	} else {
-		close(s.listenToolsUpdatesDone)
-	}
-	if s.logHandler != nil {
-		go s.listenLogs()
-	}
-	go s.listenSessions()
-	s.start(ctx)
-}
-
-// WithPromptServer sets the prompt server for the server.
-func WithPromptServer(srv PromptServer) ServerOption {
-	return func(s *server) {
-		s.promptServer = srv
-	}
-}
-
-// WithPromptListUpdater sets the prompt list watcher for the server.
-func WithPromptListUpdater(updater PromptListUpdater) ServerOption {
-	return func(s *server) {
-		s.promptListUpdater = updater
-	}
-}
-
-// WithResourceServer sets the resource server for the server.
-func WithResourceServer(srv ResourceServer) ServerOption {
-	return func(s *server) {
-		s.resourceServer = srv
-	}
-}
-
-// WithResourceListUpdater sets the resource list watcher for the server.
-func WithResourceListUpdater(updater ResourceListUpdater) ServerOption {
-	return func(s *server) {
-		s.resourceListUpdater = updater
-	}
-}
-
-// WithResourceSubscriptionHandler sets the resource subscription handler for the server.
-func WithResourceSubscriptionHandler(handler ResourceSubscriptionHandler) ServerOption {
-	return func(s *server) {
-		s.resourceSubscriptionHandler = handler
-	}
-}
-
-// WithToolServer sets the tool server for the server.
-func WithToolServer(srv ToolServer) ServerOption {
-	return func(s *server) {
-		s.toolServer = srv
-	}
-}
-
-// WithToolListUpdater sets the tool list watcher for the server.
-func WithToolListUpdater(updater ToolListUpdater) ServerOption {
-	return func(s *server) {
-		s.toolListUpdater = updater
-	}
-}
-
-// WithRootsListWatcher sets the roots list watcher for the server.
-func WithRootsListWatcher(watcher RootsListWatcher) ServerOption {
-	return func(s *server) {
-		s.rootsListWatcher = watcher
-	}
-}
-
-// WithLogHandler sets the log handler for the server.
-func WithLogHandler(handler LogHandler) ServerOption {
-	return func(s *server) {
-		s.logHandler = handler
-	}
-}
-
-// WithInstructions sets the instructions for the server.
-func WithInstructions(instructions string) ServerOption {
-	return func(s *server) {
-		s.instructions = instructions
-	}
-}
-
-// WithServerWriteTimeout sets the write timeout for the server.
-func WithServerWriteTimeout(timeout time.Duration) ServerOption {
-	return func(s *server) {
-		s.writeTimeout = timeout
-	}
-}
-
-// WithServerReadTimeout sets the read timeout for the server.
-func WithServerReadTimeout(timeout time.Duration) ServerOption {
-	return func(s *server) {
-		s.readTimeout = timeout
-	}
-}
-
-// WithServerPingInterval sets the ping interval for the server.
-func WithServerPingInterval(interval time.Duration) ServerOption {
-	return func(s *server) {
-		s.pingInterval = interval
-	}
-}
-
-// WithServerPingTimeoutThreshold sets the ping timeout threshold for the server.
-// If the number of consecutive ping timeouts exceeds the threshold, the server will close the session.
-func WithServerPingTimeoutThreshold(threshold int) ServerOption {
-	return func(s *server) {
-		s.pingTimeoutThreshold = threshold
-	}
-}
-
-// WithServerOnClientConnected sets the callback for when a client connects.
-// The callback's parameter is the ID and Info of the client.
-func WithServerOnClientConnected(onClientConnected func(string, Info)) ServerOption {
-	return func(s *server) {
-		s.onClientConnected = onClientConnected
-	}
-}
-
-// WithServerOnClientDisconnected sets the callback for when a client disconnects.
-// The callback's parameter is the ID of the client.
-// Other than being triggered by the client being disconnected, this callback would be
-// called too when the client is failed to initialize. If that the case, the client ID
-// might never been seen at onClientConnected callback.
-func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOption {
-	return func(s *server) {
-		s.onClientDisconnected = onClientDisconnected
-	}
-}
-
-func newServer(srv Server, transport ServerTransport, options ...ServerOption) server {
-	s := server{
-		Server:                        srv,
-		transport:                     transport,
-		logger:                        slog.Default(),
-		startSessions:                 make(chan Session),
-		stopSessions:                  make(chan string),
-		sessionMessages:               make(chan sessionMsg),
-		broadcasts:                    make(chan JSONRPCMessage),
-		waitForResults:                make(chan waitForResultReq),
-		results:                       make(chan JSONRPCMessage),
-		registerCancels:               make(chan cancelRequest),
-		cancelRequests:                make(chan string),
-		done:                          make(chan struct{}),
-		listenSessionsDone:            make(chan struct{}),
-		listenSubscribedResourcesDone: make(chan struct{}),
-		listenLogsDone:                make(chan struct{}),
-		listenPromptsUpdatesDone:      make(chan struct{}),
-		listenResourcesUpdatesDone:    make(chan struct{}),
-		listenToolsUpdatesDone:        make(chan struct{}),
+// NewServer creates a new Model Context Protocol (MCP) server with the specified configuration.
+func NewServer(info Info, transport ServerTransport, options ...ServerOption) Server {
+	s := Server{
+		info:                     info,
+		transport:                transport,
+		logger:                   slog.Default(),
+		sessionsWaitGroup:        &sync.WaitGroup{},
+		done:                     make(chan struct{}),
+		promptListClosed:         make(chan struct{}),
+		resourceListClosed:       make(chan struct{}),
+		resourceSubscribedClosed: make(chan struct{}),
+		toolListClosed:           make(chan struct{}),
+		logClosed:                make(chan struct{}),
 	}
 	for _, opt := range options {
 		opt(&s)
-	}
-	if s.writeTimeout == 0 {
-		s.writeTimeout = defaultServerWriteTimeout
-	}
-	if s.readTimeout == 0 {
-		s.readTimeout = defaultServerReadTimeout
 	}
 	if s.pingInterval == 0 {
 		s.pingInterval = defaultServerPingInterval
@@ -312,7 +145,7 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 
 	s.requiredClientCapabilities = ClientCapabilities{}
 
-	if srv.RequireRootsListClient() {
+	if s.requireRootsListClient {
 		s.requiredClientCapabilities.Roots = &RootsCapability{}
 		if s.rootsListWatcher != nil {
 			s.requiredClientCapabilities.Roots = &RootsCapability{
@@ -321,161 +154,305 @@ func newServer(srv Server, transport ServerTransport, options ...ServerOption) s
 		}
 	}
 
-	if srv.RequireSamplingClient() {
+	if s.requireSamplingClient {
 		s.requiredClientCapabilities.Sampling = &SamplingCapability{}
 	}
 
 	return s
 }
 
-func (s server) start(ctx context.Context) {
-	// We maintain three core maps for session state management:
-	// - sessions: tracks active client sessions
-	// - waitForResults: correlates message IDs with their response channels
-	// - cancels: stores cancellation functions for ongoing operations
-	sessions := make(map[string]Session)                   // map[sessionID]Session
-	waitForResults := make(map[string]chan JSONRPCMessage) // map[msgID]chan JSONRPCMessage
-	cancels := make(map[string]context.CancelFunc)         // map[msgID]context.CancelFunc
-
-	defer func() {
-		// Stop all active sessions and clean up resources before exiting
-
-		for sessID := range sessions {
-			s.transport.StopSession(sessID)
-		}
-
-		close(s.done)
-
-		<-s.listenSessionsDone
-		<-s.listenSubscribedResourcesDone
-		<-s.listenLogsDone
-		<-s.listenPromptsUpdatesDone
-		<-s.listenResourcesUpdatesDone
-		<-s.listenToolsUpdatesDone
-	}()
-
-	// Main event loop for handling various server operations
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case sess := <-s.startSessions:
-			sessions[sess.ID()] = sess
-		case sessID := <-s.stopSessions:
-			s.transport.StopSession(sessID)
-			delete(sessions, sessID)
-			if s.onClientDisconnected != nil {
-				s.onClientDisconnected(sessID)
-			}
-		case sessMsg := <-s.sessionMessages:
-			sess, ok := sessions[sessMsg.sessionID]
-			if !ok {
-				continue
-			}
-
-			go func(sess Session, msg JSONRPCMessage) {
-				ctx, cancel := context.WithTimeout(ctx, s.writeTimeout)
-				defer cancel()
-
-				if err := sess.Send(ctx, msg); err != nil {
-					s.logger.Error("failed to send message", "err", err)
-				}
-			}(sess, sessMsg.msg)
-		case msg := <-s.broadcasts:
-			for _, sess := range sessions {
-				go func(sess Session, msg JSONRPCMessage) {
-					ctx, cancel := context.WithTimeout(ctx, s.writeTimeout)
-					defer cancel()
-
-					if err := sess.Send(ctx, msg); err != nil {
-						s.logger.Error("failed to send message", "err", err)
-					}
-				}(sess, msg)
-			}
-		case req := <-s.waitForResults:
-			resChan := make(chan JSONRPCMessage)
-			waitForResults[req.msgID] = resChan
-			req.resChan <- resChan
-		case msg := <-s.results:
-			resChan, ok := waitForResults[string(msg.ID)]
-			if !ok {
-				continue
-			}
-			resChan <- msg
-			delete(waitForResults, string(msg.ID))
-		case cancelReq := <-s.registerCancels:
-			cancelCtx, cancel := context.WithCancel(ctx)
-			cancelReq.ctxChan <- cancelCtx
-			cancels[cancelReq.msgID] = cancel
-		case msgID := <-s.cancelRequests:
-			cancel, ok := cancels[msgID]
-			if !ok {
-				continue
-			}
-			cancel()
-			delete(cancels, msgID)
-		}
+// WithRequireRootsListClient sets the roots list client requirement for the server.
+func WithRequireRootsListClient() ServerOption {
+	return func(s *Server) {
+		s.requireRootsListClient = true
 	}
 }
 
-func (s server) listenSessions() {
-	defer close(s.listenSessionsDone)
-	// We maintain a continuous loop to handle new client sessions and their lifecycle
-	for sess := range s.transport.Sessions() {
-		select {
-		case <-s.done:
-			return
-		case s.startSessions <- sess:
-		}
-
-		// We spawn a goroutine to handle messages for this session
-		go s.listenMessages(sess)
-
-		// We spawn a separate goroutine for session management and ping handling
-		// This ensures each session maintains its own heartbeat independently
-		go func(sessID string) {
-			pingTicker := time.NewTicker(s.pingInterval)
-
-			failedPings := 0
-			for range pingTicker.C {
-				err := s.ping(sessID)
-				if err == nil {
-					failedPings = 0
-					continue
-				}
-				failedPings++
-				s.logger.Error("failed to send ping", "err", err, "failedPings", failedPings)
-				if failedPings <= s.pingTimeoutThreshold {
-					continue
-				}
-				s.logger.Error("too many ping failures, closing session", "failedPings", failedPings)
-				s.stopSessions <- sessID
-				return
-			}
-		}(sess.ID())
+// WithRequireSamplingClient sets the sampling client requirement for the server.
+func WithRequireSamplingClient() ServerOption {
+	return func(s *Server) {
+		s.requireSamplingClient = true
 	}
 }
 
-func (s server) ping(sessID string) error {
-	msg := JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      MustString(uuid.New().String()),
-		Method:  methodPing,
+// WithPromptServer sets the prompt server for the server.
+func WithPromptServer(srv PromptServer) ServerOption {
+	return func(s *Server) {
+		s.promptServer = srv
+	}
+}
+
+// WithPromptListUpdater sets the prompt list watcher for the server.
+func WithPromptListUpdater(updater PromptListUpdater) ServerOption {
+	return func(s *Server) {
+		s.promptListUpdater = updater
+	}
+}
+
+// WithResourceServer sets the resource server for the server.
+func WithResourceServer(srv ResourceServer) ServerOption {
+	return func(s *Server) {
+		s.resourceServer = srv
+	}
+}
+
+// WithResourceListUpdater sets the resource list watcher for the server.
+func WithResourceListUpdater(updater ResourceListUpdater) ServerOption {
+	return func(s *Server) {
+		s.resourceListUpdater = updater
+	}
+}
+
+// WithResourceSubscriptionHandler sets the resource subscription handler for the server.
+func WithResourceSubscriptionHandler(handler ResourceSubscriptionHandler) ServerOption {
+	return func(s *Server) {
+		s.resourceSubscriptionHandler = handler
+	}
+}
+
+// WithToolServer sets the tool server for the server.
+func WithToolServer(srv ToolServer) ServerOption {
+	return func(s *Server) {
+		s.toolServer = srv
+	}
+}
+
+// WithToolListUpdater sets the tool list watcher for the server.
+func WithToolListUpdater(updater ToolListUpdater) ServerOption {
+	return func(s *Server) {
+		s.toolListUpdater = updater
+	}
+}
+
+// WithRootsListWatcher sets the roots list watcher for the server.
+func WithRootsListWatcher(watcher RootsListWatcher) ServerOption {
+	return func(s *Server) {
+		s.rootsListWatcher = watcher
+	}
+}
+
+// WithLogHandler sets the log handler for the server.
+func WithLogHandler(handler LogHandler) ServerOption {
+	return func(s *Server) {
+		s.logHandler = handler
+	}
+}
+
+// WithInstructions sets the instructions for the server.
+func WithInstructions(instructions string) ServerOption {
+	return func(s *Server) {
+		s.instructions = instructions
+	}
+}
+
+// WithServerPingInterval sets the ping interval for the server.
+func WithServerPingInterval(interval time.Duration) ServerOption {
+	return func(s *Server) {
+		s.pingInterval = interval
+	}
+}
+
+// WithServerPingTimeoutThreshold sets the ping timeout threshold for the server.
+// If the number of consecutive ping timeouts exceeds the threshold, the server will close the session.
+func WithServerPingTimeoutThreshold(threshold int) ServerOption {
+	return func(s *Server) {
+		s.pingTimeoutThreshold = threshold
+	}
+}
+
+// WithServerOnClientConnected sets the callback for when a client connects.
+// The callback's parameter is the ID and Info of the client.
+func WithServerOnClientConnected(onClientConnected func(string, Info)) ServerOption {
+	return func(s *Server) {
+		s.onClientConnected = onClientConnected
+	}
+}
+
+// WithServerOnClientDisconnected sets the callback for when a client disconnects.
+// The callback's parameter is the ID of the client.
+func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOption {
+	return func(s *Server) {
+		s.onClientDisconnected = onClientDisconnected
+	}
+}
+
+// Serve starts a Model Context Protocol (MCP) server and manages its lifecycle. It handles
+// client connections, protocol messages, and server capabilities according to the MCP specification.
+//
+// The server parameter must implement the Server interface to define core MCP capabilities
+// like prompts, resources, and tools. The transport parameter specifies how the server
+// communicates with clients (e.g., HTTP or stdio).
+//
+// Serve blocks until the provided context is cancelled, at which point it performs
+// a graceful shutdown by closing all active sessions and cleaning up resources.
+func (s Server) Serve() {
+	broadcasts := make(chan JSONRPCMessage)
+
+	if s.promptListUpdater != nil {
+		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates(),
+			broadcasts, s.promptListClosed)
+	} else {
+		close(s.promptListClosed)
 	}
 
-	requester := s.clientRequester(sessID)
-	res, err := requester(msg)
-	if err != nil {
-		return fmt.Errorf("failed to send ping: %w", err)
+	if s.resourceListUpdater != nil {
+		go s.listenUpdates(methodNotificationsResourcesListChanged, s.resourceListUpdater.ResourceListUpdates(),
+			broadcasts, s.resourceListClosed)
+	} else {
+		close(s.resourceListClosed)
 	}
-	if res.Error != nil {
-		return fmt.Errorf("error response: %w", res.Error)
+
+	if s.resourceSubscriptionHandler != nil {
+		go s.listenSubcribedResources(broadcasts)
+	} else {
+		close(s.resourceSubscribedClosed)
 	}
+
+	if s.toolListUpdater != nil {
+		go s.listenUpdates(methodNotificationsToolsListChanged, s.toolListUpdater.ToolListUpdates(),
+			broadcasts, s.toolListClosed)
+	} else {
+		close(s.toolListClosed)
+	}
+
+	if s.logHandler != nil {
+		go s.listenLogs(broadcasts)
+	} else {
+		close(s.logClosed)
+	}
+
+	s.start(broadcasts)
+}
+
+// Shutdown gracefully shuts down the server by terminating all active client.
+func (s Server) Shutdown(ctx context.Context) error {
+	// Signal the server to shutdown and terminates all sessions
+	close(s.done)
+
+	// Wait for all sessions to finish
+	s.sessionsWaitGroup.Wait()
+
+	// Close the transport so the Sessions loop in the start function breaks.
+	if err := s.transport.Shutdown(ctx); err != nil {
+		return fmt.Errorf("failed to shutdown transport: %w", err)
+	}
+
+	// Wait for all goroutines to finish
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close PromptListUpdater: %w", ctx.Err())
+	case <-s.promptListClosed:
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close ResourceListUpdater: %w", ctx.Err())
+	case <-s.resourceListClosed:
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close ResourceSubscriptionHandler: %w", ctx.Err())
+	case <-s.resourceSubscribedClosed:
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close ToolListUpdater: %w", ctx.Err())
+	case <-s.toolListClosed:
+	}
+
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("failed to close LogHandler: %w", ctx.Err())
+	case <-s.logClosed:
+	}
+
 	return nil
 }
 
-func (s server) listenSubcribedResources() {
-	defer close(s.listenSubscribedResourcesDone)
+func (s Server) start(broadcasts <-chan JSONRPCMessage) {
+	// These channles are used to send broadcasts to all sessions in the goroutine below.
+	sessions := make(chan serverSession)
+	removedSessions := make(chan string)
+
+	go s.broadcast(broadcasts, sessions, removedSessions)
+
+	// This loop would break when the transport is closed.
+	for sess := range s.transport.Sessions() {
+		ss := serverSession{
+			session:                     sess,
+			logger:                      s.logger.With(slog.String("sessionID", sess.ID())),
+			serverCap:                   s.capabilities,
+			requiredClientCap:           s.requiredClientCapabilities,
+			serverInfo:                  s.info,
+			instructions:                s.instructions,
+			pingInterval:                s.pingInterval,
+			pingTimeoutThreshold:        s.pingTimeoutThreshold,
+			promptServer:                s.promptServer,
+			resourceServer:              s.resourceServer,
+			toolServer:                  s.toolServer,
+			resourceSubscriptionHandler: s.resourceSubscriptionHandler,
+			logHandler:                  s.logHandler,
+			rootsListWatcher:            s.rootsListWatcher,
+		}
+		// Updates the broadcaster about new sessions
+		sessions <- ss
+
+		s.sessionsWaitGroup.Add(1)
+
+		// This session would close itself when client failed to initialize or
+		// when consecutive pings fail beyond threshold.
+		go func() {
+			defer s.sessionsWaitGroup.Done()
+
+			if s.onClientConnected != nil {
+				s.onClientConnected(ss.session.ID(), ss.serverInfo)
+			}
+
+			ss.start(s.done)
+
+			if s.onClientDisconnected != nil {
+				s.onClientDisconnected(ss.session.ID())
+			}
+
+			// Notify the broadcaster about removed sessions
+			select {
+			case <-s.done:
+			case removedSessions <- ss.session.ID():
+			}
+		}()
+	}
+}
+
+func (s Server) broadcast(messages <-chan JSONRPCMessage, sessions <-chan serverSession, removedSession <-chan string) {
+	// Store all active sessions in a map for easy lookup
+	sessMap := make(map[string]serverSession)
+
+	for {
+		select {
+		case <-s.done:
+			return
+		case sess := <-sessions:
+			sessMap[sess.session.ID()] = sess
+		case sessID := <-removedSession:
+			delete(sessMap, sessID)
+		case msg := <-messages:
+			// Broadcast the message to all active sessions
+			for _, sess := range sessMap {
+				if err := sess.session.Send(msg); err != nil {
+					sess.logger.Error("failed to send message",
+						slog.Any("message", msg),
+						slog.String("err", err.Error()))
+				}
+			}
+		}
+	}
+}
+
+func (s Server) listenSubcribedResources(messages chan<- JSONRPCMessage) {
+	defer close(s.resourceSubscribedClosed)
 
 	for uri := range s.resourceSubscriptionHandler.SubscribedResourceUpdates() {
 		params := notificationsResourcesUpdatedParams{
@@ -494,13 +471,13 @@ func (s server) listenSubcribedResources() {
 		select {
 		case <-s.done:
 			return
-		case s.broadcasts <- msg:
+		case messages <- msg:
 		}
 	}
 }
 
-func (s server) listenLogs() {
-	defer close(s.listenLogsDone)
+func (s Server) listenLogs(messages chan<- JSONRPCMessage) {
+	defer close(s.logClosed)
 
 	for params := range s.logHandler.LogStreams() {
 		paramsBs, err := json.Marshal(params)
@@ -516,13 +493,18 @@ func (s server) listenLogs() {
 		select {
 		case <-s.done:
 			return
-		case s.broadcasts <- msg:
+		case messages <- msg:
 		}
 	}
 }
 
-func (s server) listenUpdates(method string, updates iter.Seq[struct{}], done chan struct{}) {
-	defer close(done)
+func (s Server) listenUpdates(
+	method string,
+	updates iter.Seq[struct{}],
+	messages chan<- JSONRPCMessage,
+	closed chan<- struct{},
+) {
+	defer close(closed)
 
 	for range updates {
 		msg := JSONRPCMessage{
@@ -532,508 +514,327 @@ func (s server) listenUpdates(method string, updates iter.Seq[struct{}], done ch
 		select {
 		case <-s.done:
 			return
-		case s.broadcasts <- msg:
+		case messages <- msg:
 		}
 	}
 }
 
-func (s server) listenMessages(session Session) {
-	msgs := session.Messages()
-	sessID := session.ID()
+func (s serverSession) start(done <-chan struct{}) {
+	// This channel is used to feed the ping goroutine a message ID we received from the client.
+	pingMessageIDs := make(chan MustString, 10)
+	// Spawn a goroutine to handle the session's lifetime with ping.
+	go s.ping(pingMessageIDs, done)
+	// This map is used to store the cancellation for the request
+	// we receive from the client and forwards to server implementation.
+	ctxCancels := make(map[MustString]context.CancelFunc)
+	// This map is used to store the result channels for the clientRequester. The channel
+	// would be feed once we receive the result back from the client.
+	requestResults := make(map[MustString]chan JSONRPCMessage)
+	// This base context is to make sure all the operations in the loop below is cancelled
+	// when the loop is broken.
+	baseCtx, baseCancel := context.WithCancel(context.Background())
+	// This flag indicates whether we already established the session with the client.
+	// Before this flag is set to true, other than ping and initialization message,
+	// we should ignore any other messages from the client.
+	initialized := false
 
-	for msg := range msgs {
-		// We validate JSON-RPC version before processing any message
+	// This loops would break when the session is closed
+	for msg := range s.session.Messages() {
+		// Validate JSON-RPC version before processing any message
 		if msg.JSONRPC != JSONRPCVersion {
-			s.logger.Error("failed to handle message", "err", errInvalidJSON)
+			s.logger.Info("failed to handle message",
+				slog.Any("message", msg),
+				slog.String("err", errInvalidJSON.Error()),
+			)
 			continue
 		}
 
-		// We use a switch statement to route messages to appropriate handlers
-		// Each handler runs in its own goroutine to prevent blocking
 		switch msg.Method {
 		case methodPing:
-			go s.sendResult(sessID, msg.ID, nil)
+			// Send pong back to the client
+			if err := s.session.Send(JSONRPCMessage{
+				JSONRPC: JSONRPCVersion,
+				ID:      msg.ID,
+			}); err != nil {
+				s.logger.Error("failed to send pong", slog.String("err", err.Error()))
+			}
 		case methodInitialize:
-			go s.handleInitialize(sessID, msg, s.capabilities, s.requiredClientCapabilities, s.Info())
-		case MethodPromptsList:
-			go s.handleListPrompts(sessID, msg)
-		case MethodPromptsGet:
-			go s.handleGetPrompt(sessID, msg)
-		case MethodResourcesList:
-			go s.handleListResources(sessID, msg)
-		case MethodResourcesRead:
-			go s.handleReadResource(sessID, msg)
-		case MethodResourcesTemplatesList:
-			go s.handleListResourceTemplates(sessID, msg)
-		case MethodResourcesSubscribe:
-			go s.handleSubscribeResource(sessID, msg)
-		case MethodResourcesUnsubscribe:
-			go s.handleUnsubscribeResource(sessID, msg)
-		case MethodToolsList:
-			go s.handleListTools(sessID, msg)
-		case MethodToolsCall:
-			go s.handleCallTool(sessID, msg)
-		case MethodCompletionComplete:
-			var params CompletesCompletionParams
-			if err := json.Unmarshal(msg.Params, &params); err != nil {
-				s.sendError(sessID, msg.ID, JSONRPCError{
-					Code:    jsonRPCInvalidParamsCode,
-					Message: errMsgInvalidJSON,
-					Data:    map[string]any{"error": err},
-				})
+			// If the initialization request is invalid, we cannot call session.Stop() here,
+			// because it would make calling that function twice. Which in turn would cause
+			// the "closing of closed channel" panic in the transport implementation.
+			s.handleInitializeRequest(msg)
+		case MethodPromptsList, MethodPromptsGet, MethodResourcesList, MethodResourcesRead, MethodResourcesTemplatesList,
+			MethodResourcesSubscribe, MethodResourcesUnsubscribe, MethodToolsList, MethodToolsCall,
+			MethodCompletionComplete, MethodLoggingSetLevel:
+			if !initialized {
+				// Ignore messages until the session is initialized
 				continue
 			}
-			switch params.Ref.Type {
-			case CompletionRefPrompt:
-				go s.handleCompletePrompt(sessID, msg)
-			case CompletionRefResource:
-				go s.handleCompleteResource(sessID, msg)
-			default:
-				err := fmt.Errorf("unsupported completion reference type: %s", params.Ref.Type)
-				s.sendError(sessID, msg.ID, JSONRPCError{
-					Code:    jsonRPCInvalidParamsCode,
-					Message: errMsgInvalidJSON,
-					Data:    map[string]any{"error": err},
-				})
-			}
-		case MethodLoggingSetLevel:
-			go s.handleSetLogLevel(sessID, msg)
+			// All the method above required us to call the server implementation, and all the call is cancellable,
+			// so we need to register it to the map, so we can cancel it if the client requests it.
+			serverCtx, serverCancel := context.WithCancel(baseCtx)
+			ctxCancels[msg.ID] = serverCancel
+			// Since the call for the server implementation may use clientRequester that wait for client's response,
+			// we need to register the result channel for the clientRequester to receive the response. Also, since
+			// waiting for the client's response is a blocking operation, we need to spawn a goroutine to handle it.
+			results := make(chan JSONRPCMessage)
+			requestResults[msg.ID] = results
+			go s.handleServerImplementationMessage(serverCtx, msg, results)
 		case methodNotificationsInitialized:
-			s.initialized = true
+			// Successfully established the session with the client
+			initialized = true
 		case methodNotificationsCancelled:
-			select {
-			case <-s.done:
-			case s.cancelRequests <- string(msg.ID):
+			if !initialized {
+				// Ignore messages until the session is initialized
+				continue
+			}
+			// Lookup the context cancellation for message ID
+			cancel, ok := ctxCancels[msg.ID]
+			if ok {
+				cancel()
 			}
 		case methodNotificationsRootsListChanged:
+			if !initialized {
+				// Ignore messages until the session is initialized
+				continue
+			}
 			if s.rootsListWatcher != nil {
 				s.rootsListWatcher.OnRootsListChanged()
 			}
 		case "":
+			// This is the response from the client, either from ping request or
+			// clientRequester that called by the server implementation
+
+			// Feed the ping gourotine with the message ID we received from the client.
 			select {
-			case <-s.done:
-			case s.results <- msg:
+			case <-done:
+				break
+			case pingMessageIDs <- msg.ID:
 			}
+
+			// If it is indeed a ping response, it would not stored on the map.
+			// And as the other rseponse with invalid message ID, we ingore it.
+			results, rOk := requestResults[msg.ID]
+			if !rOk {
+				continue
+			}
+			// Feed the stored result channel, but drop it instantly if there is no receiver. The no-receiver case
+			// happens when the clientRequester is failed to send the request to the client, but somehow the client
+			// response back with this message ID.
+			select {
+			case results <- msg:
+			default:
+			}
+			delete(requestResults, msg.ID)
 		}
 	}
 
-	select {
-	case s.stopSessions <- sessID:
-	case <-s.done:
+	// Cancel all the contexts that we created
+	baseCancel()
+	// Close the ping message ID channel
+	close(pingMessageIDs)
+	// Close all the results channel
+	for _, results := range requestResults {
+		close(results)
 	}
 }
 
-func (s server) handleInitialize(
-	sessID string,
+func (s serverSession) handleInitializeRequest(msg JSONRPCMessage) {
+	// Verify client's initialization request
+	res, err := s.initializationHandshake(msg)
+	if err != nil {
+		s.logger.Info("invalid initialization request", slog.String("err", err.Error()))
+		// Initialization failed, send the error to the client to notify them to close the session.
+		if err := s.session.Send(JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
+			ID:      msg.ID,
+			Error: &JSONRPCError{
+				Code:    jsonRPCInvalidParamsCode,
+				Message: err.Error(),
+			},
+		}); err != nil {
+			s.logger.Error("failed to send initialization error", slog.String("err", err.Error()))
+		}
+		return
+	}
+	resBs, _ := json.Marshal(res)
+	if err := s.session.Send(JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		ID:      msg.ID,
+		Result:  resBs,
+	}); err != nil {
+		s.logger.Error("failed to send initialization result", slog.String("err", err.Error()))
+	}
+}
+
+func (s serverSession) ping(messageIDs <-chan MustString, done <-chan struct{}) {
+	defer s.session.Stop()
+
+	pingTicker := time.NewTicker(s.pingInterval)
+	failedPings := 0
+	var msgID MustString
+
+	for {
+		if failedPings > s.pingTimeoutThreshold {
+			s.logger.Warn("too many pings failed, closing session")
+			return
+		}
+
+		select {
+		case <-done:
+			return
+		case id := <-messageIDs:
+			// Received id from client response, check whether it's the same as the one we sent.
+			if id != msgID {
+				continue
+			}
+			// If it's the same, we received a ping response, reset the failed ping counter.
+			// s.logger.Info("received ping response, resetting failed ping counter")
+			failedPings = 0
+			continue
+		case <-pingTicker.C:
+		}
+
+		// Send the ping message to the client.
+		msgID = MustString(uuid.New().String())
+		if err := s.session.Send(JSONRPCMessage{
+			JSONRPC: JSONRPCVersion,
+			ID:      msgID,
+			Method:  methodPing,
+		}); err != nil {
+			s.logger.Warn("failed to send ping", slog.String("err", err.Error()))
+			failedPings++
+		}
+	}
+}
+
+func (s serverSession) handleServerImplementationMessage(
+	ctx context.Context,
 	msg JSONRPCMessage,
-	serverCap ServerCapabilities,
-	requiredClientCap ClientCapabilities,
-	serverInfo Info,
+	results <-chan JSONRPCMessage,
 ) {
+	// This variables is used to store all the result from the server implementation
+	// to be sent back to the client below.
+	var result any
+	// The err is should always an instance of JSONRPCError, we declare it as an error type,
+	// is for the nil-check feature.
+	var err error
+
+	switch msg.Method {
+	case MethodPromptsList:
+		result, err = s.callListPrompts(ctx, msg, results)
+	case MethodPromptsGet:
+		result, err = s.callGetPrompt(ctx, msg, results)
+	case MethodResourcesList:
+		result, err = s.callListResources(ctx, msg, results)
+	case MethodResourcesRead:
+		result, err = s.callReadResource(ctx, msg, results)
+	case MethodResourcesTemplatesList:
+		result, err = s.callListResourceTemplates(ctx, msg, results)
+	case MethodResourcesSubscribe:
+		err = s.callSubscribeResource(msg)
+	case MethodResourcesUnsubscribe:
+		err = s.callUnsubscribeResource(msg)
+	case MethodToolsList:
+		result, err = s.callListTools(ctx, msg, results)
+	case MethodToolsCall:
+		result, err = s.callCallTool(ctx, msg, results)
+	case MethodCompletionComplete:
+		var params CompletesCompletionParams
+		if err = json.Unmarshal(msg.Params, &params); err != nil {
+			err = JSONRPCError{
+				Code:    jsonRPCInvalidParamsCode,
+				Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+			}
+			break
+		}
+		switch params.Ref.Type {
+		case CompletionRefPrompt:
+			result, err = s.callCompletePrompt(ctx, msg, results)
+		case CompletionRefResource:
+			result, err = s.callCompleteResource(ctx, msg, results)
+		default:
+		}
+	case MethodLoggingSetLevel:
+		err = s.callSetLogLevel(msg)
+	default:
+		return
+	}
+
+	resMsg := JSONRPCMessage{
+		JSONRPC: JSONRPCVersion,
+		ID:      msg.ID,
+	}
+
+	if err != nil {
+		jsonErr := JSONRPCError{}
+		if errors.As(err, &jsonErr) {
+			s.logger.Error("failed to call server implementation",
+				slog.String("method", msg.Method),
+				slog.String("err", err.Error()))
+			resMsg.Error = &jsonErr
+		}
+	} else if result != nil {
+		// Some call doesn't return any result, so this nil check is needed.
+		resMsg.Result, _ = json.Marshal(result)
+	}
+
+	if err := s.session.Send(resMsg); err != nil {
+		s.logger.Error("failed to send result", slog.String("err", err.Error()))
+	}
+}
+
+func (s serverSession) initializationHandshake(msg JSONRPCMessage) (initializeResult, error) {
 	var params initializeParams
 	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
+		return initializeResult{}, JSONRPCError{
 			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		s.stopSessions <- sessID
-		return
+			Message: fmt.Sprintf("failed to unmarshal params: %s", err.Error()),
+		}
 	}
 
 	if params.ProtocolVersion != protocolVersion {
-		err := fmt.Errorf("protocol version mismatch: %s != %s", params.ProtocolVersion, protocolVersion)
-		s.sendError(sessID, msg.ID, JSONRPCError{
+		return initializeResult{}, JSONRPCError{
 			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgUnsupportedProtocolVersion,
-			Data:    map[string]any{"error": err},
-		})
-		s.stopSessions <- sessID
-		return
+			Message: fmt.Sprintf("protocol version mismatch: %s != %s", params.ProtocolVersion, protocolVersion),
+		}
 	}
 
-	if requiredClientCap.Roots != nil {
+	if s.requiredClientCap.Roots != nil {
 		if params.Capabilities.Roots == nil {
-			err := fmt.Errorf("insufficient client capabilities: missing required capability 'roots'")
-			s.sendError(sessID, msg.ID, JSONRPCError{
+			return initializeResult{}, JSONRPCError{
 				Code:    jsonRPCInvalidParamsCode,
-				Message: errMsgInsufficientClientCapabilities,
-				Data:    map[string]any{"error": err},
-			})
-			s.stopSessions <- sessID
-			return
+				Message: "insufficient client capabilities: missing required capability 'roots'",
+			}
 		}
-		if requiredClientCap.Roots.ListChanged {
+		if s.requiredClientCap.Roots.ListChanged {
 			if !params.Capabilities.Roots.ListChanged {
-				err := fmt.Errorf("insufficient client capabilities: missing required capability 'roots.listChanged'")
-				s.sendError(sessID, msg.ID, JSONRPCError{
+				return initializeResult{}, JSONRPCError{
 					Code:    jsonRPCInvalidParamsCode,
-					Message: errMsgInsufficientClientCapabilities,
-					Data:    map[string]any{"error": err},
-				})
-				s.stopSessions <- sessID
-				return
+					Message: "insufficient client capabilities: missing required capability 'roots.listChanged'",
+				}
 			}
 		}
 	}
 
-	if requiredClientCap.Sampling != nil {
+	if s.requiredClientCap.Sampling != nil {
 		if params.Capabilities.Sampling == nil {
-			err := fmt.Errorf("insufficient client capabilities: missing required capability 'sampling'")
-			s.sendError(sessID, msg.ID, JSONRPCError{
+			return initializeResult{}, JSONRPCError{
 				Code:    jsonRPCInvalidParamsCode,
-				Message: errMsgInsufficientClientCapabilities,
-				Data:    map[string]any{"error": err},
-			})
-			s.stopSessions <- sessID
-			return
+				Message: "insufficient client capabilities: missing required capability 'sampling'",
+			}
 		}
 	}
 
-	s.sendResult(sessID, msg.ID, initializeResult{
+	return initializeResult{
 		ProtocolVersion: protocolVersion,
-		Capabilities:    serverCap,
-		ServerInfo:      serverInfo,
+		Capabilities:    s.serverCap,
+		ServerInfo:      s.serverInfo,
 		Instructions:    s.instructions,
-	})
-	if s.onClientConnected != nil {
-		s.onClientConnected(sessID, params.ClientInfo)
-	}
+	}, nil
 }
 
-func (s server) handleListPrompts(sessID string, msg JSONRPCMessage) {
-	if s.promptServer == nil || !s.initialized {
-		return
-	}
-
-	var params ListPromptsParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	ps, err := s.promptServer.ListPrompts(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to list prompts: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, ps)
-}
-
-func (s server) handleGetPrompt(sessID string, msg JSONRPCMessage) {
-	if s.promptServer == nil || !s.initialized {
-		return
-	}
-
-	var params GetPromptParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	p, err := s.promptServer.GetPrompt(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to get prompt: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, p)
-}
-
-func (s server) handleListResources(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
-		return
-	}
-
-	var params ListResourcesParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	rs, err := s.resourceServer.ListResources(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to list resources: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, rs)
-}
-
-func (s server) handleReadResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
-		return
-	}
-
-	var params ReadResourceParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	r, err := s.resourceServer.ReadResource(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to read resource: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, r)
-}
-
-func (s server) handleListResourceTemplates(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
-		return
-	}
-
-	var params ListResourceTemplatesParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	ts, err := s.resourceServer.ListResourceTemplates(ctx, params,
-		s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to list resource templates: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, ts)
-}
-
-func (s server) handleSubscribeResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceSubscriptionHandler == nil || !s.initialized {
-		return
-	}
-
-	var params SubscribeResourceParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	s.resourceSubscriptionHandler.SubscribeResource(params)
-
-	s.sendResult(sessID, msg.ID, nil)
-}
-
-func (s server) handleUnsubscribeResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceSubscriptionHandler == nil || !s.initialized {
-		return
-	}
-
-	var params UnsubscribeResourceParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	s.resourceSubscriptionHandler.UnsubscribeResource(params)
-
-	s.sendResult(sessID, msg.ID, nil)
-}
-
-func (s server) handleCompletePrompt(sessID string, msg JSONRPCMessage) {
-	if s.promptServer == nil || !s.initialized {
-		return
-	}
-
-	var params CompletesCompletionParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	result, err := s.promptServer.CompletesPrompt(ctx, params, s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to complete prompt: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, result)
-}
-
-func (s server) handleCompleteResource(sessID string, msg JSONRPCMessage) {
-	if s.resourceServer == nil || !s.initialized {
-		return
-	}
-
-	var params CompletesCompletionParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	result, err := s.resourceServer.CompletesResourceTemplate(ctx, params, s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to complete resource template: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, result)
-}
-
-func (s server) handleListTools(sessID string, msg JSONRPCMessage) {
-	if s.toolServer == nil || !s.initialized {
-		return
-	}
-
-	var params ListToolsParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	ts, err := s.toolServer.ListTools(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		nErr := fmt.Errorf("failed to list tools: %w", err)
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInternalErrorCode,
-			Message: nErr.Error(),
-		})
-		return
-	}
-
-	s.sendResult(sessID, msg.ID, ts)
-}
-
-func (s server) handleCallTool(sessID string, msg JSONRPCMessage) {
-	if s.toolServer == nil || !s.initialized {
-		return
-	}
-
-	var params CallToolParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	ctx := s.registerCancel(string(msg.ID))
-
-	result, err := s.toolServer.CallTool(ctx, params, s.progressReporter(sessID, msg.ID), s.clientRequester(sessID))
-	if err != nil {
-		result = CallToolResult{
-			Content: []Content{
-				{
-					Type: ContentTypeText,
-					Text: err.Error(),
-				},
-			},
-			IsError: true,
-		}
-	}
-
-	s.sendResult(sessID, msg.ID, result)
-}
-
-func (s server) handleSetLogLevel(sessID string, msg JSONRPCMessage) {
-	if s.logHandler == nil || !s.initialized {
-		return
-	}
-
-	var params LogParams
-	if err := json.Unmarshal(msg.Params, &params); err != nil {
-		s.sendError(sessID, msg.ID, JSONRPCError{
-			Code:    jsonRPCInvalidParamsCode,
-			Message: errMsgInvalidJSON,
-			Data:    map[string]any{"error": err},
-		})
-		return
-	}
-
-	s.logHandler.SetLogLevel(params.Level)
-}
-
-func (s server) progressReporter(sessID string, msgID MustString) func(ProgressParams) {
+func (s serverSession) progressReporter(msgID MustString) func(ProgressParams) {
 	return func(params ProgressParams) {
 		paramsBs, err := json.Marshal(params)
 		if err != nil {
@@ -1048,127 +849,340 @@ func (s server) progressReporter(sessID string, msgID MustString) func(ProgressP
 			Params:  paramsBs,
 		}
 
-		sessMsg := sessionMsg{
-			sessionID: sessID,
-			msg:       msg,
-		}
-
-		select {
-		case <-s.done:
-		case s.sessionMessages <- sessMsg:
+		if err := s.session.Send(msg); err != nil {
+			s.logger.Error("failed to send message", "err", err)
 		}
 	}
 }
 
-func (s server) clientRequester(sessID string) func(msg JSONRPCMessage) (JSONRPCMessage, error) {
-	// We return a closure that handles the complexity of making client requests
-	// This includes message correlation and timeout management
+func (s serverSession) clientRequester(msgID MustString, results <-chan JSONRPCMessage) RequestClientFunc {
 	return func(msg JSONRPCMessage) (JSONRPCMessage, error) {
-		// We generate a unique ID for request-response correlation
-		msgID := uuid.New().String()
-		msg.ID = MustString(msgID)
-
-		// We set up channels for handling the response asynchronously
-		resChanChan := make(chan chan JSONRPCMessage)
-		wfrReq := waitForResultReq{
-			msgID:   msgID,
-			resChan: resChanChan,
-		}
-
-		select {
-		case <-s.done:
-			return JSONRPCMessage{}, errors.New("server closed")
-		case s.waitForResults <- wfrReq:
-		}
-
-		resChan := <-resChanChan
-
-		sessMsg := sessionMsg{
-			sessionID: sessID,
-			msg:       msg,
-		}
-
-		select {
-		case <-s.done:
-			return JSONRPCMessage{}, errors.New("server closed")
-		case s.sessionMessages <- sessMsg:
-		}
-
-		ticker := time.NewTicker(s.readTimeout)
-
-		var resMsg JSONRPCMessage
-
-		select {
-		case <-ticker.C:
-			err := errors.New("request timeout")
-			s.logger.Error("failed to wait for result", "err", err)
+		// Override the message ID, so we can intercept the result correctly in the main loop.
+		msg.ID = msgID
+		if err := s.session.Send(msg); err != nil {
 			return JSONRPCMessage{}, err
-		case <-s.done:
-			return JSONRPCMessage{}, errors.New("server closed")
-		case resMsg = <-resChan:
 		}
 
-		return resMsg, nil
+		return <-results, nil
 	}
 }
 
-func (s server) sendResult(sessID string, msgID MustString, result any) {
-	var resBs []byte
-	if result != nil {
-		var err error
-		resBs, err = json.Marshal(result)
-		if err != nil {
-			s.logger.Error("failed to marshal result", "err", err)
+func (s serverSession) callListPrompts(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (ListPromptResult, error) {
+	if s.promptServer == nil {
+		return ListPromptResult{}, errors.New("prompts not supported by server")
+	}
+
+	var params ListPromptsParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return ListPromptResult{}, JSONRPCError{
+			Code:    jsonRPCInvalidParamsCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
 		}
 	}
 
-	msg := JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      msgID,
-		Result:  resBs,
+	ps, err := s.promptServer.ListPrompts(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to list prompts: %w", err)
+		return ListPromptResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
 	}
 
-	sessMsg := sessionMsg{
-		sessionID: sessID,
-		msg:       msg,
-	}
-
-	select {
-	case <-s.done:
-	case s.sessionMessages <- sessMsg:
-	}
+	return ps, nil
 }
 
-func (s server) sendError(sessID string, msgID MustString, err JSONRPCError) {
-	s.logger.Error("request error", "err", err)
-	msg := JSONRPCMessage{
-		JSONRPC: JSONRPCVersion,
-		ID:      msgID,
-		Error:   &err,
+func (s serverSession) callGetPrompt(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (GetPromptResult, error) {
+	if s.promptServer == nil {
+		return GetPromptResult{}, errors.New("prompts not supported by server")
 	}
 
-	sessMsg := sessionMsg{
-		sessionID: sessID,
-		msg:       msg,
+	var params GetPromptParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return GetPromptResult{}, JSONRPCError{
+			Code:    jsonRPCInvalidParamsCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
 	}
 
-	select {
-	case <-s.done:
-	case s.sessionMessages <- sessMsg:
+	p, err := s.promptServer.GetPrompt(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to get prompt: %w", err)
+		return GetPromptResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
 	}
+
+	return p, nil
 }
 
-func (s server) registerCancel(msgID string) context.Context {
-	ctxChan := make(chan context.Context)
-	req := cancelRequest{
-		msgID:   msgID,
-		ctxChan: ctxChan,
+func (s serverSession) callListResources(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (ListResourcesResult, error) {
+	if s.resourceServer == nil {
+		return ListResourcesResult{}, errors.New("resources not supported by server")
 	}
 
-	select {
-	case <-s.done:
-		return nil
-	case s.registerCancels <- req:
+	var params ListResourcesParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return ListResourcesResult{}, JSONRPCError{
+			Code:    jsonRPCInvalidParamsCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
 	}
-	return <-ctxChan
+
+	rs, err := s.resourceServer.ListResources(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to list resources: %w", err)
+		return ListResourcesResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return rs, nil
+}
+
+func (s serverSession) callReadResource(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (ReadResourceResult, error) {
+	if s.resourceServer == nil {
+		return ReadResourceResult{}, errors.New("resources not supported by server")
+	}
+
+	var params ReadResourceParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return ReadResourceResult{}, JSONRPCError{
+			Code:    jsonRPCInvalidParamsCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	r, err := s.resourceServer.ReadResource(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to read resource: %w", err)
+		return ReadResourceResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return r, nil
+}
+
+func (s serverSession) callListResourceTemplates(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (ListResourceTemplatesResult, error) {
+	if s.resourceServer == nil {
+		return ListResourceTemplatesResult{}, errors.New("resources not supported by server")
+	}
+
+	var params ListResourceTemplatesParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return ListResourceTemplatesResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	ts, err := s.resourceServer.ListResourceTemplates(ctx, params,
+		s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to list resource templates: %w", err)
+		return ListResourceTemplatesResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return ts, nil
+}
+
+func (s serverSession) callSubscribeResource(msg JSONRPCMessage) error {
+	if s.resourceSubscriptionHandler == nil {
+		return errors.New("resources subscription not supported by server")
+	}
+
+	var params SubscribeResourceParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	s.resourceSubscriptionHandler.SubscribeResource(params)
+
+	return nil
+}
+
+func (s serverSession) callUnsubscribeResource(msg JSONRPCMessage) error {
+	if s.resourceSubscriptionHandler == nil {
+		return errors.New("resources subscription not supported by server")
+	}
+
+	var params UnsubscribeResourceParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	s.resourceSubscriptionHandler.UnsubscribeResource(params)
+
+	return nil
+}
+
+func (s serverSession) callCompletePrompt(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (CompletionResult, error) {
+	if s.promptServer == nil {
+		return CompletionResult{}, errors.New("prompts not supported by server")
+	}
+
+	var params CompletesCompletionParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	result, err := s.promptServer.CompletesPrompt(ctx, params, s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to complete prompt: %w", err)
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return result, nil
+}
+
+func (s serverSession) callCompleteResource(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (CompletionResult, error) {
+	if s.resourceServer == nil {
+		return CompletionResult{}, errors.New("resources not supported by server")
+	}
+
+	var params CompletesCompletionParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	result, err := s.resourceServer.CompletesResourceTemplate(ctx, params, s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to complete resource template: %w", err)
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return result, nil
+}
+
+func (s serverSession) callListTools(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (ListToolsResult, error) {
+	if s.toolServer == nil {
+		return ListToolsResult{}, errors.New("tools not supported by server")
+	}
+
+	var params ListToolsParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return ListToolsResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	ts, err := s.toolServer.ListTools(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		nErr := fmt.Errorf("failed to list tools: %w", err)
+		return ListToolsResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: nErr.Error(),
+		}
+	}
+
+	return ts, nil
+}
+
+func (s serverSession) callCallTool(
+	ctx context.Context,
+	msg JSONRPCMessage,
+	results <-chan JSONRPCMessage,
+) (CallToolResult, error) {
+	if s.toolServer == nil {
+		return CallToolResult{}, errors.New("tools not supported by server")
+	}
+
+	var params CallToolParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return CallToolResult{}, JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	result, err := s.toolServer.CallTool(ctx, params, s.progressReporter(msg.ID), s.clientRequester(msg.ID, results))
+	if err != nil {
+		result = CallToolResult{
+			Content: []Content{
+				{
+					Type: ContentTypeText,
+					Text: err.Error(),
+				},
+			},
+			IsError: true,
+		}
+	}
+
+	return result, nil
+}
+
+func (s serverSession) callSetLogLevel(msg JSONRPCMessage) error {
+	if s.logHandler == nil {
+		return errors.New("logging not supported by server")
+	}
+
+	var params LogParams
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return JSONRPCError{
+			Code:    jsonRPCInternalErrorCode,
+			Message: fmt.Errorf("failed to unmarshal params: %w", err).Error(),
+		}
+	}
+
+	s.logHandler.SetLogLevel(params.Level)
+
+	return nil
 }

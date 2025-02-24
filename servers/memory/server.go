@@ -30,24 +30,6 @@ func NewServer(memoryFilePath string) Server {
 	}
 }
 
-// Info implements mcp.Server interface.
-func (s Server) Info() mcp.Info {
-	return mcp.Info{
-		Name:    "memory",
-		Version: "1.0",
-	}
-}
-
-// RequireRootsListClient implements mcp.Server interface.
-func (s Server) RequireRootsListClient() bool {
-	return false
-}
-
-// RequireSamplingClient implements mcp.Server interface.
-func (s Server) RequireSamplingClient() bool {
-	return false
-}
-
 // ListTools implements mcp.ToolServer interface.
 // Returns the list of available memory tools supported by this server.
 // The tools provide various memory operations like creating, deleting, and searching

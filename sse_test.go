@@ -22,8 +22,18 @@ func TestSSEServerAndClient(t *testing.T) {
 	server := mcp.NewSSEServer(testServer.URL + "/message")
 	mux.Handle("/connect", server.HandleSSE())
 	mux.Handle("/message", server.HandleMessage())
-	defer testServer.Close()
-	defer server.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Printf("Server forced to shutdown: %v", err)
+			return
+		}
+
+		testServer.Close()
+	}()
 
 	// Create client
 	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
@@ -57,10 +67,14 @@ func TestSSEServerAndClient(t *testing.T) {
 
 	// Wait for first client session
 	var session mcp.Session
-	for s := range server.Sessions() {
-		session = s
-		break
-	}
+	sessions := make(chan mcp.Session, 1)
+	go func() {
+		for s := range server.Sessions() {
+			sessions <- s
+		}
+	}()
+	session = <-sessions
+	defer session.Stop()
 
 	// Send message from server to client
 	serverMsg := mcp.JSONRPCMessage{
@@ -68,7 +82,7 @@ func TestSSEServerAndClient(t *testing.T) {
 		Method:  "test",
 		Params:  json.RawMessage(`{"test": "hello"}`),
 	}
-	if err := session.Send(ctx, serverMsg); err != nil {
+	if err := session.Send(serverMsg); err != nil {
 		t.Fatalf("failed to send server message: %v", err)
 	}
 
@@ -121,18 +135,49 @@ func TestSSEServerMultipleClients(t *testing.T) {
 	// Create test server
 	mux := http.NewServeMux()
 	testServer := httptest.NewServer(mux)
-	defer testServer.Close()
 
 	server := mcp.NewSSEServer(testServer.URL + "/message")
 	mux.Handle("/connect", server.HandleSSE())
 	mux.Handle("/message", server.HandleMessage())
-	defer server.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Printf("Server forced to shutdown: %v", err)
+			return
+		}
+
+		testServer.Close()
+	}()
 
 	// Listen for server sessions in goroutine
 	sessionCount := int64(0)
+	sessions := make(chan mcp.Session)
 	go func() {
-		for range server.Sessions() {
+		for sess := range server.Sessions() {
 			atomic.AddInt64(&sessionCount, 1)
+			sessions <- sess
+		}
+		close(sessions)
+	}()
+
+	go func() {
+		// Read all the messages from all the server sessions.
+		ss := make([]mcp.Session, 0)
+		for sess := range sessions {
+			ss = append(ss, sess)
+			go func(sess mcp.Session) {
+				for msg := range sess.Messages() {
+					t.Logf("received message: %s", msg.Method)
+				}
+			}(sess)
+		}
+
+		// Stop all the server sessions when we're done.
+		for _, sess := range ss {
+			sess.Stop()
 		}
 	}()
 
@@ -207,12 +252,22 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 	t.Run("Invalid Message Format", func(t *testing.T) {
 		mux := http.NewServeMux()
 		testServer := httptest.NewServer(mux)
-		defer testServer.Close()
 
 		server := mcp.NewSSEServer(testServer.URL + "/message")
 		mux.Handle("/connect", server.HandleSSE())
 		mux.Handle("/message", server.HandleMessage())
-		defer server.Close()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+
+			// Attempt graceful shutdown
+			if err := server.Shutdown(ctx); err != nil {
+				fmt.Printf("Server forced to shutdown: %v", err)
+				return
+			}
+
+			testServer.Close()
+		}()
 
 		invalidMsg := []byte(`{invalid json}`)
 
@@ -235,12 +290,22 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 	t.Run("Session Timeout", func(t *testing.T) {
 		mux := http.NewServeMux()
 		testServer := httptest.NewServer(mux)
-		defer testServer.Close()
 
 		server := mcp.NewSSEServer(testServer.URL + "/message")
 		mux.Handle("/connect", server.HandleSSE())
 		mux.Handle("/message", server.HandleMessage())
-		defer server.Close()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			defer cancel()
+
+			// Attempt graceful shutdown
+			if err := server.Shutdown(ctx); err != nil {
+				fmt.Printf("Server forced to shutdown: %v", err)
+				return
+			}
+
+			testServer.Close()
+		}()
 
 		client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
 
@@ -268,6 +333,20 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 		mux.Handle("/connect", server.HandleSSE())
 		mux.Handle("/message", server.HandleMessage())
 
+		go func() {
+			var session mcp.Session
+			for sess := range server.Sessions() {
+				session = sess
+				go func(sess mcp.Session) {
+					for msg := range sess.Messages() {
+						t.Logf("received message: %s", msg.Method)
+					}
+				}(sess)
+			}
+
+			session.Stop()
+		}()
+
 		client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -283,7 +362,14 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 			t.Fatalf("connection not ready: %v", err)
 		}
 
-		server.Close()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer shutdownCancel()
+
+		err = server.Shutdown(shutdownCtx)
+		if err != nil {
+			t.Fatalf("Failed to shutdown server: %v", err)
+		}
+
 		testServer.Close()
 
 		msgReceived := false
@@ -301,12 +387,22 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	// Create a test server
 	mux := http.NewServeMux()
 	testServer := httptest.NewServer(mux)
-	defer testServer.Close()
 
 	server := mcp.NewSSEServer(testServer.URL + "/message")
 	mux.Handle("/connect", server.HandleSSE())
 	mux.Handle("/message", server.HandleMessage())
-	defer server.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Printf("Server forced to shutdown: %v", err)
+			return
+		}
+
+		testServer.Close()
+	}()
 
 	// Create client
 	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
@@ -342,10 +438,14 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 
 	// Wait for first client session
 	var session mcp.Session
-	for s := range server.Sessions() {
-		session = s
-		break
-	}
+	sessions := make(chan mcp.Session, 1)
+	go func() {
+		for s := range server.Sessions() {
+			sessions <- s
+		}
+	}()
+	session = <-sessions
+	defer session.Stop()
 
 	// Channels to track message exchanges
 	clientReceivedMsgs := make([]mcp.JSONRPCMessage, 0)
@@ -372,7 +472,7 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	// Send messages in both directions
 	for _, msg := range testMessages {
 		// Server to client
-		if err := session.Send(ctx, msg); err != nil {
+		if err := session.Send(msg); err != nil {
 			t.Fatalf("failed to send server message: %v", err)
 		}
 
@@ -432,12 +532,22 @@ func TestSSELargeMessagePayload(t *testing.T) {
 	// Create a test server
 	mux := http.NewServeMux()
 	testServer := httptest.NewServer(mux)
-	defer testServer.Close()
 
 	server := mcp.NewSSEServer(testServer.URL + "/message")
 	mux.Handle("/connect", server.HandleSSE())
 	mux.Handle("/message", server.HandleMessage())
-	defer server.Close()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Printf("Server forced to shutdown: %v", err)
+			return
+		}
+
+		testServer.Close()
+	}()
 
 	// Create client
 	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client(),
@@ -460,10 +570,19 @@ func TestSSELargeMessagePayload(t *testing.T) {
 
 	// Wait for first client session
 	var session mcp.Session
-	for s := range server.Sessions() {
-		session = s
-		break
-	}
+	sessions := make(chan mcp.Session, 1)
+	go func() {
+		for s := range server.Sessions() {
+			sessions <- s
+		}
+	}()
+	session = <-sessions
+	go func(sess mcp.Session) {
+		for msg := range sess.Messages() {
+			t.Logf("received message: %s", msg.Method)
+		}
+	}(session)
+	defer session.Stop()
 
 	// Generate a large payload with varying sizes
 	payloadSizes := []int{
@@ -498,7 +617,7 @@ func TestSSELargeMessagePayload(t *testing.T) {
 			}()
 
 			// Send large message from server to client
-			if err := session.Send(ctx, largeMsg); err != nil {
+			if err := session.Send(largeMsg); err != nil {
 				t.Fatalf("failed to send large message: %v", err)
 			}
 

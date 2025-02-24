@@ -24,7 +24,8 @@ import (
 // Resources must be properly released by calling Close when the StdIO instance is no
 // longer needed.
 type StdIO struct {
-	sess stdIOSession
+	sess   stdIOSession
+	closed chan struct{}
 }
 
 type stdIOSession struct {
@@ -32,7 +33,8 @@ type stdIOSession struct {
 	writer io.Writer
 	logger *slog.Logger
 
-	done chan struct{}
+	done   chan struct{}
+	closed chan struct{}
 }
 
 // NewStdIO creates a new StdIO instance configured with the provided reader and writer.
@@ -45,7 +47,9 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 			writer: writer,
 			logger: slog.Default(),
 			done:   make(chan struct{}),
+			closed: make(chan struct{}),
 		},
+		closed: make(chan struct{}),
 	}
 }
 
@@ -54,22 +58,26 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 // the StdIO instance.
 func (s StdIO) Sessions() iter.Seq[Session] {
 	return func(yield func(Session) bool) {
+		defer close(s.closed)
+
+		// StdIO only supports a single session, so we yield it and wait until it's done.
 		yield(s.sess)
+		<-s.sess.done
 	}
 }
 
-// StopSession stops the session with the given ID.
-func (s StdIO) StopSession(sessID string) {
-	if sessID == "1" {
-		s.sess.stop()
-	}
+// Shutdown implements the ServerTransport interface by closing the session.
+func (s StdIO) Shutdown(context.Context) error {
+	// We don't need to do anything here, since StdIO is only supports a single session,
+	// and we leave it at the stopping of session.
+	return nil
 }
 
 // Send implements the ClientTransport interface by transmitting a JSON-RPC message to
 // the server through the established session. The context can be used to control the
 // transmission timeout.
-func (s StdIO) Send(ctx context.Context, msg JSONRPCMessage) error {
-	return s.sess.Send(ctx, msg)
+func (s StdIO) Send(_ context.Context, msg JSONRPCMessage) error {
+	return s.sess.Send(msg)
 }
 
 // StartSession implements the ClientTransport interface by initializing a new session
@@ -84,19 +92,27 @@ func (s stdIOSession) ID() string {
 	return "1"
 }
 
-func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
+func (s stdIOSession) Send(msg JSONRPCMessage) error {
 	msgBs, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
-	// We append newline to maintain message framing protocol
+	// Append newline to maintain message framing protocol
 	msgBs = append(msgBs, '\n')
 
 	errs := make(chan error, 1)
 
-	// We use a goroutine for writing to prevent blocking on slow writers
-	// while still respecting context cancellation
+	// Spawn a goroutine for writing to prevent blocking on slow writers
+	// while still respecting context cancellation or done channel.
 	go func() {
+		// Safeguard to make sure the session is still alive
+		select {
+		case <-s.done:
+			s.logger.Warn("session is closed while writing message", slog.String("message", string(msgBs)))
+			return
+		default:
+		}
+
 		_, err = s.writer.Write(msgBs)
 		if err != nil {
 			errs <- fmt.Errorf("failed to write message: %w", err)
@@ -105,19 +121,22 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 		errs <- nil
 	}()
 
-	// We prioritize context cancellation and session termination over write completion
 	select {
-	case <-ctx.Done():
-		return ctx.Err()
 	case err := <-errs:
+		if err != nil {
+			s.logger.Error("failed to send message", slog.String("err", err.Error()))
+		}
 		return err
 	case <-s.done:
+		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
 		return nil
 	}
 }
 
 func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	return func(yield func(JSONRPCMessage) bool) {
+		defer close(s.closed)
+
 		// Use bufio.Reader instead of bufio.Scanner to avoid max token size errors.
 		reader := bufio.NewReader(s.reader)
 		for {
@@ -172,6 +191,7 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	}
 }
 
-func (s stdIOSession) stop() {
+func (s stdIOSession) Stop() {
 	close(s.done)
+	<-s.closed
 }

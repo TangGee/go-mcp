@@ -44,24 +44,6 @@ func NewServer(roots []string) (Server, error) {
 	return s, nil
 }
 
-// Info implements mcp.Server interface.
-func (s Server) Info() mcp.Info {
-	return mcp.Info{
-		Name:    "filesystem",
-		Version: "1.0",
-	}
-}
-
-// RequireRootsListClient implements mcp.Server interface.
-func (s Server) RequireRootsListClient() bool {
-	return false
-}
-
-// RequireSamplingClient implements mcp.Server interface.
-func (s Server) RequireSamplingClient() bool {
-	return false
-}
-
 // ListTools implements mcp.ToolServer interface.
 // Returns the list of available filesystem tools supported by this server.
 // The tools provide various filesystem operations like reading, writing, and managing files.

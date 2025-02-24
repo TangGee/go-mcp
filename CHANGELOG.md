@@ -9,15 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `StopSession` method for `ServerTransport` interface.
+- `Stop` method for `Session` interface.
 - Auto-close server session on ping timeout exceeds given threshold.
 - Auto-close client on ping timeout exceeds given threshold.
 - `WithServerPingTimeoutThreshold` option for `Serve` function.
 - `WithClientPingTimeoutThreshold` option for `Client` struct.
 - `memory` server implementation.
+- `Server` struct.
 - `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
 - `WithServerOnClientConnected` option for `Serve`.
 - `WithServerOnClientDisconnected` option for `Serve`.
+- `Shutdown` method for `ServerTransport` interface.
+
+### Changed
+
+- The `Send` method in `Session` interface now is not accept `ctx` as a parameters.
+
+### Removed
+
+- `WithServerWriteTimeout` and `WithServerReadTimeout` options for `Server` struct.  
+- `Serve` method, replaced by `Server` struct.
 
 ## [0.5.1] - 2025-02-17
 

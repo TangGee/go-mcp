@@ -11,11 +11,6 @@ import (
 	"github.com/MegaGrindStone/go-mcp"
 )
 
-type mockServer struct {
-	requireRootsListClient bool
-	requireSamplingClient  bool
-}
-
 type mockPromptServer struct {
 	listParams      mcp.ListPromptsParams
 	getParams       mcp.GetPromptParams
@@ -23,7 +18,8 @@ type mockPromptServer struct {
 }
 
 type mockPromptListUpdater struct {
-	ch chan struct{}
+	ch   chan struct{}
+	done chan struct{}
 }
 
 type mockResourceServer struct {
@@ -35,13 +31,15 @@ type mockResourceServer struct {
 }
 
 type mockResourceListUpdater struct {
-	ch chan struct{}
+	ch   chan struct{}
+	done chan struct{}
 }
 
 type mockResourceSubscriptionHandler struct {
 	subscribeParams   mcp.SubscribeResourceParams
 	unsubscribeParams mcp.UnsubscribeResourceParams
 	ch                chan string
+	done              chan struct{}
 }
 
 type mockToolServer struct {
@@ -53,30 +51,21 @@ type mockToolServer struct {
 }
 
 type mockToolListUpdater struct {
-	ch chan struct{}
+	ch   chan struct{}
+	done chan struct{}
 }
 
 type mockLogHandler struct {
-	lock   sync.Mutex
-	level  mcp.LogLevel
+	lock  sync.Mutex
+	level mcp.LogLevel
+
 	params chan mcp.LogParams
+	done   chan struct{}
 }
 
 type mockRootsListWatcher struct {
 	lock        sync.Mutex
 	updateCount int
-}
-
-func (m mockServer) Info() mcp.Info {
-	return mcp.Info{Name: "test-server", Version: "1.0"}
-}
-
-func (m mockServer) RequireRootsListClient() bool {
-	return m.requireRootsListClient
-}
-
-func (m mockServer) RequireSamplingClient() bool {
-	return m.requireSamplingClient
 }
 
 func (m *mockPromptServer) ListPrompts(
@@ -117,9 +106,14 @@ func (m *mockPromptServer) CompletesPrompt(
 
 func (m mockPromptListUpdater) PromptListUpdates() iter.Seq[struct{}] {
 	return func(yield func(struct{}) bool) {
-		for range m.ch {
-			if !yield(struct{}{}) {
+		for {
+			select {
+			case <-m.done:
 				return
+			case <-m.ch:
+				if !yield(struct{}{}) {
+					return
+				}
 			}
 		}
 	}
@@ -173,7 +167,12 @@ func (m *mockResourceServer) CompletesResourceTemplate(
 
 func (m mockResourceListUpdater) ResourceListUpdates() iter.Seq[struct{}] {
 	return func(yield func(struct{}) bool) {
-		for range m.ch {
+		for {
+			select {
+			case <-m.done:
+				return
+			case <-m.ch:
+			}
 			if !yield(struct{}{}) {
 				return
 			}
@@ -191,9 +190,14 @@ func (m *mockResourceSubscriptionHandler) UnsubscribeResource(params mcp.Unsubsc
 
 func (m *mockResourceSubscriptionHandler) SubscribedResourceUpdates() iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for uri := range m.ch {
-			if !yield(uri) {
+		for {
+			select {
+			case <-m.done:
 				return
+			case uri := <-m.ch:
+				if !yield(uri) {
+					return
+				}
 			}
 		}
 	}
@@ -203,11 +207,11 @@ func (m *mockToolServer) ListTools(
 	_ context.Context,
 	params mcp.ListToolsParams,
 	_ mcp.ProgressReporter,
-	clientFunct mcp.RequestClientFunc,
+	clientFunc mcp.RequestClientFunc,
 ) (mcp.ListToolsResult, error) {
 	m.listParams = params
 	if m.requestRootsList {
-		_, err := clientFunct(mcp.JSONRPCMessage{
+		_, err := clientFunc(mcp.JSONRPCMessage{
 			JSONRPC: mcp.JSONRPCVersion,
 			Method:  mcp.MethodRootsList,
 		})
@@ -245,9 +249,14 @@ func (m *mockToolServer) CallTool(
 
 func (m mockToolListUpdater) ToolListUpdates() iter.Seq[struct{}] {
 	return func(yield func(struct{}) bool) {
-		for range m.ch {
-			if !yield(struct{}{}) {
+		for {
+			select {
+			case <-m.done:
 				return
+			case <-m.ch:
+				if !yield(struct{}{}) {
+					return
+				}
 			}
 		}
 	}
@@ -255,9 +264,14 @@ func (m mockToolListUpdater) ToolListUpdates() iter.Seq[struct{}] {
 
 func (m *mockLogHandler) LogStreams() iter.Seq[mcp.LogParams] {
 	return func(yield func(mcp.LogParams) bool) {
-		for params := range m.params {
-			if !yield(params) {
+		for {
+			select {
+			case <-m.done:
 				return
+			case params := <-m.params:
+				if !yield(params) {
+					return
+				}
 			}
 		}
 	}
