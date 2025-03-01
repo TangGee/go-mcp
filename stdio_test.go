@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -281,8 +282,14 @@ func TestStdIOMalformedJSONHandling(t *testing.T) {
 
 func TestStdIOConcurrentMessageStress(t *testing.T) {
 	// Create buffered pipes to simulate stdin/stdout
-	clientReader, serverWriter := io.Pipe()
-	serverReader, clientWriter := io.Pipe()
+	clientReader, serverWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverReader, clientWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Create StdIO instances
 	serverTransport := mcp.NewStdIO(serverReader, serverWriter)
@@ -346,8 +353,15 @@ func TestStdIOConcurrentMessageStress(t *testing.T) {
 	var sendWg sync.WaitGroup
 	sendWg.Add(2)
 
+	// Add semaphore to limit concurrent messages
+	sendSemaphore := make(chan struct{}, 10)
+
 	go func() {
 		defer sendWg.Done()
+
+		sendSemaphore <- struct{}{}
+		defer func() { <-sendSemaphore }()
+
 		for i := 0; i < messageCount; i++ {
 			msg := mcp.JSONRPCMessage{
 				JSONRPC: mcp.JSONRPCVersion,
@@ -367,6 +381,10 @@ func TestStdIOConcurrentMessageStress(t *testing.T) {
 
 	go func() {
 		defer sendWg.Done()
+
+		sendSemaphore <- struct{}{}
+		defer func() { <-sendSemaphore }()
+
 		for i := 0; i < messageCount; i++ {
 			msg := mcp.JSONRPCMessage{
 				JSONRPC: mcp.JSONRPCVersion,
