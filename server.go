@@ -922,7 +922,10 @@ func (s serverSession) callListPrompts(
 	results <-chan JSONRPCMessage,
 ) (ListPromptResult, error) {
 	if s.promptServer == nil {
-		return ListPromptResult{}, errors.New("prompts not supported by server")
+		return ListPromptResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "prompts not supported by server",
+		}
 	}
 
 	var params ListPromptsParams
@@ -951,7 +954,10 @@ func (s serverSession) callGetPrompt(
 	results <-chan JSONRPCMessage,
 ) (GetPromptResult, error) {
 	if s.promptServer == nil {
-		return GetPromptResult{}, errors.New("prompts not supported by server")
+		return GetPromptResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "prompts not supported by server",
+		}
 	}
 
 	var params GetPromptParams
@@ -980,7 +986,10 @@ func (s serverSession) callListResources(
 	results <-chan JSONRPCMessage,
 ) (ListResourcesResult, error) {
 	if s.resourceServer == nil {
-		return ListResourcesResult{}, errors.New("resources not supported by server")
+		return ListResourcesResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources not supported by server",
+		}
 	}
 
 	var params ListResourcesParams
@@ -1009,7 +1018,10 @@ func (s serverSession) callReadResource(
 	results <-chan JSONRPCMessage,
 ) (ReadResourceResult, error) {
 	if s.resourceServer == nil {
-		return ReadResourceResult{}, errors.New("resources not supported by server")
+		return ReadResourceResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources not supported by server",
+		}
 	}
 
 	var params ReadResourceParams
@@ -1038,7 +1050,10 @@ func (s serverSession) callListResourceTemplates(
 	results <-chan JSONRPCMessage,
 ) (ListResourceTemplatesResult, error) {
 	if s.resourceServer == nil {
-		return ListResourceTemplatesResult{}, errors.New("resources not supported by server")
+		return ListResourceTemplatesResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources not supported by server",
+		}
 	}
 
 	var params ListResourceTemplatesParams
@@ -1064,7 +1079,10 @@ func (s serverSession) callListResourceTemplates(
 
 func (s serverSession) callSubscribeResource(msg JSONRPCMessage) error {
 	if s.resourceSubscriptionHandler == nil {
-		return errors.New("resources subscription not supported by server")
+		return JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources subscription not supported by server",
+		}
 	}
 
 	var params SubscribeResourceParams
@@ -1082,7 +1100,10 @@ func (s serverSession) callSubscribeResource(msg JSONRPCMessage) error {
 
 func (s serverSession) callUnsubscribeResource(msg JSONRPCMessage) error {
 	if s.resourceSubscriptionHandler == nil {
-		return errors.New("resources subscription not supported by server")
+		return JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources subscription not supported by server",
+		}
 	}
 
 	var params UnsubscribeResourceParams
@@ -1104,7 +1125,10 @@ func (s serverSession) callCompletePrompt(
 	results <-chan JSONRPCMessage,
 ) (CompletionResult, error) {
 	if s.promptServer == nil {
-		return CompletionResult{}, errors.New("prompts not supported by server")
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "prompts not supported by server",
+		}
 	}
 
 	var params CompletesCompletionParams
@@ -1133,7 +1157,10 @@ func (s serverSession) callCompleteResource(
 	results <-chan JSONRPCMessage,
 ) (CompletionResult, error) {
 	if s.resourceServer == nil {
-		return CompletionResult{}, errors.New("resources not supported by server")
+		return CompletionResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "resources not supported by server",
+		}
 	}
 
 	var params CompletesCompletionParams
@@ -1162,7 +1189,10 @@ func (s serverSession) callListTools(
 	results <-chan JSONRPCMessage,
 ) (ListToolsResult, error) {
 	if s.toolServer == nil {
-		return ListToolsResult{}, errors.New("tools not supported by server")
+		return ListToolsResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "tools not supported by server",
+		}
 	}
 
 	var params ListToolsParams
@@ -1191,7 +1221,10 @@ func (s serverSession) callCallTool(
 	results <-chan JSONRPCMessage,
 ) (CallToolResult, error) {
 	if s.toolServer == nil {
-		return CallToolResult{}, errors.New("tools not supported by server")
+		return CallToolResult{}, JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "tools not supported by server",
+		}
 	}
 
 	var params CallToolParams
@@ -1220,7 +1253,10 @@ func (s serverSession) callCallTool(
 
 func (s serverSession) callSetLogLevel(msg JSONRPCMessage) error {
 	if s.logHandler == nil {
-		return errors.New("logging not supported by server")
+		return JSONRPCError{
+			Code:    jsonRPCMethodNotFoundCode,
+			Message: "logging not supported by server",
+		}
 	}
 
 	var params LogParams
