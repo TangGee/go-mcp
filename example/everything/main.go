@@ -37,7 +37,8 @@ func main() {
 		Name:    "everything",
 		Version: "1.0",
 	}, sse,
-		mcp.WithServerPingInterval(30*time.Second),
+		mcp.WithServerPingInterval(10*time.Second),
+		mcp.WithServerPingTimeout(5*time.Second),
 		mcp.WithPromptServer(server),
 		mcp.WithResourceServer(server),
 		mcp.WithToolServer(server),
@@ -64,6 +65,10 @@ func main() {
 	defer cancel()
 
 	// Attempt graceful shutdown
+	if err := cli.cli.Disconnect(ctx); err != nil {
+		fmt.Printf("Client forced to shutdown: %v", err)
+		return
+	}
 	if err := srv.Shutdown(ctx); err != nil {
 		fmt.Printf("Server forced to shutdown: %v", err)
 		return

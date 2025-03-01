@@ -9,26 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Stop` method for `Session` interface.
 - Auto-close server session on ping timeout exceeds given threshold.
-- Auto-close client on ping timeout exceeds given threshold.
-- `WithServerPingTimeoutThreshold` option for `Serve` function.
-- `WithClientPingTimeoutThreshold` option for `Client` struct.
-- `memory` server implementation.
-- `Server` struct.
-- `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
-- `WithServerOnClientConnected` option for `Serve`.
-- `WithServerOnClientDisconnected` option for `Serve`.
+- `Server` struct with the same option as `Serve`.
+- `WithServerPingTimeout` option for `Server` struct.
+- `WithServerPingTimeoutThreshold` option for `Server` struct.
+- `WithServerOnClientConnected` option for `Server` struct.
+- `WithServerOnClientDisconnected` option for `Server` struct.
+- `Disconnect` method for `Client` struct.
 - `Shutdown` method for `ServerTransport` interface.
+- `WithClientPingTimeout` option for `Client` struct.
+- `WithClientOnPingFailed` option for `Client` struct.
+- `Stop` method for `Session` interface.
+- `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
+- `memory` server implementation.
 
 ### Changed
 
-- The `Send` method in `Session` interface now is not accept `ctx` as a parameters.
+- The `Connect` method in `Client` struct is no longer block forever, once the session is established and initialized, it will return immediately, and the `Client` struct would be able to be used properly.
+- The `StartSession` method in `ClientTransport` now returns a `Session` instead of an iterator.
 
 ### Removed
 
 - `WithServerWriteTimeout` and `WithServerReadTimeout` options for `Server` struct.  
-- `Serve` method, replaced by `Server` struct.
+- `WithClientWriteTimeout` and `WithClientReadTimeout` options for `Client` struct, user could provides the timeout on the `ctx` parameter.
+- `Serve` function, replaced by `Server` struct.
+- `Send` function in `ClientTransport` interface, it's handled by the `Session` interface.
 
 ## [0.5.1] - 2025-02-17
 

@@ -50,7 +50,8 @@ func newClient() *client {
 		Name:    "everything-client",
 		Version: "1.0",
 	}, sse,
-		mcp.WithClientPingInterval(30*time.Second),
+		mcp.WithClientPingInterval(10*time.Second),
+		mcp.WithClientPingTimeout(5*time.Second),
 		mcp.WithSamplingHandler(&c),
 		mcp.WithResourceSubscribedWatcher(&c),
 		mcp.WithProgressListener(&c),
@@ -100,17 +101,14 @@ func (c *client) OnLog(params mcp.LogParams) {
 func (c *client) run() {
 	defer c.stop()
 
-	ready := make(chan struct{})
-
 	fmt.Println("Connecting to server...")
 	go func() {
-		if err := c.cli.Connect(c.ctx, ready); err != nil {
+		if err := c.cli.Connect(c.ctx); err != nil {
 			fmt.Printf("failed to connect to server: %v\n", err)
 			return
 		}
 	}()
 	go c.listenInterruptSignal()
-	<-ready
 
 	fmt.Printf("Connected to server")
 
@@ -328,7 +326,6 @@ Your input is not found in the list of possible completions, input an empty stri
 	}
 }
 
-//nolint:funlen
 func (c *client) runResources() bool {
 	cursor := ""
 	for {
@@ -441,7 +438,6 @@ func (c *client) runResources() bool {
 	return false
 }
 
-//nolint:funlen
 func (c *client) runTools() bool {
 	listToolsParams := mcp.ListToolsParams{
 		Cursor: "",
@@ -782,7 +778,7 @@ func (c *client) runLogs() bool {
 			level = mcp.LogLevelEmergency
 		}
 
-		if err := c.cli.SetLogLevel(level); err != nil {
+		if err := c.cli.SetLogLevel(c.ctx, level); err != nil {
 			fmt.Printf("Failed to set log level: %v\n", err)
 			continue
 		}

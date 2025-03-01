@@ -28,26 +28,19 @@ type ClientTransport interface {
 	// feeding an error. Operations are canceled when the context is canceled, and appropriate errors are returned
 	// for connection or protocol failures. Refer to the returned iterator's documentation for details on message
 	// handling.
-	StartSession(ctx context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error)
-
-	// Send transmits a message to the server. The implementation must only allow sending
-	// after the ready channel from StartSession is closed or fed. Operations should be
-	// canceled if the context is canceled, and appropriate errors should be returned for
-	// transmission failures.
-	Send(ctx context.Context, msg JSONRPCMessage) error
+	StartSession(ctx context.Context) (Session, error)
 }
 
 // Session represents a bidirectional communication channel between server and client.
 type Session interface {
 	// ID returns the unique identifier for this session. The implementation must
-	// guarantee that session IDs are unique across all active sessions managed by
-	// the ServerTransport.
+	// guarantee that session IDs are unique across all active sessions managed.
 	ID() string
 
 	// Send transmits a message to the client.
-	Send(msg JSONRPCMessage) error
+	Send(ctx context.Context, msg JSONRPCMessage) error
 
-	// Messages returns an iterator that yields messages received from the client.
+	// Messages returns an iterator that yields messages received from the other party.
 	// The implementations should exit the iteration if the session is closed.
 	Messages() iter.Seq[JSONRPCMessage]
 
@@ -337,13 +330,3 @@ type ProgressReporter func(progress ProgressParams)
 //
 // It should respect the JSON-RPC 2.0 specification for error handling and message formatting.
 type RequestClientFunc func(msg JSONRPCMessage) (JSONRPCMessage, error)
-
-type waitForResultReq struct {
-	msgID   string
-	resChan chan<- chan JSONRPCMessage
-}
-
-type cancelRequest struct {
-	msgID   string
-	ctxChan chan<- context.Context
-}

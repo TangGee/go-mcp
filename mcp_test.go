@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,15 +18,14 @@ import (
 type testSuite struct {
 	cfg testSuiteConfig
 
-	clientCancel    context.CancelFunc
 	serverTransport mcp.ServerTransport
 	clientTransport mcp.ClientTransport
 
 	httpServer  *httptest.Server
-	srvIOReader *io.PipeReader
-	srvIOWriter *io.PipeWriter
-	cliIOReader *io.PipeReader
-	cliIOWriter *io.PipeWriter
+	srvIOReader *os.File
+	srvIOWriter *os.File
+	cliIOReader *os.File
+	cliIOWriter *os.File
 
 	mcpServer        mcp.Server
 	mcpClient        *mcp.Client
@@ -54,6 +54,7 @@ func TestInitialize(t *testing.T) {
 	var resourceSubscriptionHandler *mockResourceSubscriptionHandler
 	var toolListUpdater *mockToolListUpdater
 	var logHandler *mockLogHandler
+	var rootsListUpdater *mockRootsListUpdater
 
 	testCases := []testCase{
 		{
@@ -134,7 +135,11 @@ func TestInitialize(t *testing.T) {
 					return mcp.WithRootsListHandler(&mockRootsListHandler{})
 				},
 				func() mcp.ClientOption {
-					return mcp.WithRootsListUpdater(&mockRootsListUpdater{})
+					rootsListUpdater = &mockRootsListUpdater{
+						ch:   make(chan struct{}),
+						done: make(chan struct{}),
+					}
+					return mcp.WithRootsListUpdater(rootsListUpdater)
 				},
 				func() mcp.ClientOption {
 					return mcp.WithSamplingHandler(&mockSamplingHandler{})
@@ -188,11 +193,15 @@ func TestInitialize(t *testing.T) {
 					if logHandler != nil {
 						close(logHandler.done)
 					}
+					if rootsListUpdater != nil {
+						close(rootsListUpdater.done)
+					}
 					promptListUpdater = nil
 					resourceListUpdater = nil
 					resourceSubscriptionHandler = nil
 					toolListUpdater = nil
 					logHandler = nil
+					rootsListUpdater = nil
 				}()
 
 				if tc.wantErr {
@@ -226,70 +235,90 @@ func TestUninitializedClient(t *testing.T) {
 	}, nil)
 
 	t.Run("ListPrompts", func(t *testing.T) {
-		_, err := client.ListPrompts(context.Background(), mcp.ListPromptsParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.ListPrompts(ctx, mcp.ListPromptsParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("GetPrompt", func(t *testing.T) {
-		_, err := client.GetPrompt(context.Background(), mcp.GetPromptParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.GetPrompt(ctx, mcp.GetPromptParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("CompletesPrompt", func(t *testing.T) {
-		_, err := client.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.CompletesPrompt(ctx, mcp.CompletesCompletionParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("ListResources", func(t *testing.T) {
-		_, err := client.ListResources(context.Background(), mcp.ListResourcesParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.ListResources(ctx, mcp.ListResourcesParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("ReadResource", func(t *testing.T) {
-		_, err := client.ReadResource(context.Background(), mcp.ReadResourceParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.ReadResource(ctx, mcp.ReadResourceParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("ListResourceTemplates", func(t *testing.T) {
-		_, err := client.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.ListResourceTemplates(ctx, mcp.ListResourceTemplatesParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("SubscribeResource", func(t *testing.T) {
-		err := client.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := client.SubscribeResource(ctx, mcp.SubscribeResourceParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("ListTools", func(t *testing.T) {
-		_, err := client.ListTools(context.Background(), mcp.ListToolsParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.ListTools(ctx, mcp.ListToolsParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("CallTool", func(t *testing.T) {
-		_, err := client.CallTool(context.Background(), mcp.CallToolParams{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.CallTool(ctx, mcp.CallToolParams{})
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
 	})
 
 	t.Run("SetLogLevel", func(t *testing.T) {
-		err := client.SetLogLevel(mcp.LogLevelDebug)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := client.SetLogLevel(ctx, mcp.LogLevelDebug)
 		if err == nil || err.Error() != "client not initialized" {
 			t.Errorf("expected 'client not initialized' error, got %v", err)
 		}
@@ -309,7 +338,10 @@ func TestPrompt(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListPrompts(context.Background(), mcp.ListPromptsParams{
+			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer listCancel()
+
+			_, err := s.mcpClient.ListPrompts(listCtx, mcp.ListPromptsParams{
 				Cursor: "cursor",
 				Meta: mcp.ParamsMeta{
 					ProgressToken: "progressToken",
@@ -319,14 +351,20 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.GetPrompt(context.Background(), mcp.GetPromptParams{
+			getCtx, getCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer getCancel()
+
+			_, err = s.mcpClient.GetPrompt(getCtx, mcp.GetPromptParams{
 				Name: "test-prompt",
 			})
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
+			completesCtx, completesCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer completesCancel()
+
+			_, err = s.mcpClient.CompletesPrompt(completesCtx, mcp.CompletesCompletionParams{
 				Ref: mcp.CompletionRef{
 					Type: mcp.CompletionRefPrompt,
 					Name: "test-prompt",
@@ -340,7 +378,10 @@ func TestPrompt(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithPromptServer(&promptServer))
 
 		t.Run(fmt.Sprintf("%s/ListPrompts", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListPrompts(context.Background(), mcp.ListPromptsParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.ListPrompts(ctx, mcp.ListPromptsParams{
 				Cursor: "cursor",
 				Meta: mcp.ParamsMeta{
 					ProgressToken: "progressToken",
@@ -366,7 +407,10 @@ func TestPrompt(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/GetPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.GetPrompt(context.Background(), mcp.GetPromptParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.GetPrompt(ctx, mcp.GetPromptParams{
 				Name: "test-prompt",
 			})
 			if err != nil {
@@ -380,7 +424,10 @@ func TestPrompt(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/CompletesPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.CompletesPrompt(context.Background(), mcp.CompletesCompletionParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.CompletesPrompt(ctx, mcp.CompletesCompletionParams{
 				Ref: mcp.CompletionRef{
 					Type: mcp.CompletionRefPrompt,
 					Name: "test-prompt",
@@ -435,21 +482,30 @@ func TestResource(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListResources(context.Background(), mcp.ListResourcesParams{
+			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer listCancel()
+
+			_, err := s.mcpClient.ListResources(listCtx, mcp.ListResourcesParams{
 				Cursor: "cursor",
 			})
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.ReadResource(context.Background(), mcp.ReadResourceParams{
+			readCtx, readCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer readCancel()
+
+			_, err = s.mcpClient.ReadResource(readCtx, mcp.ReadResourceParams{
 				URI: "test://resource",
 			})
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
+			listTemplatesCtx, listTemplatesCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer listTemplatesCancel()
+
+			_, err = s.mcpClient.ListResourceTemplates(listTemplatesCtx, mcp.ListResourceTemplatesParams{
 				Meta: mcp.ParamsMeta{
 					ProgressToken: "progressToken",
 				},
@@ -458,7 +514,10 @@ func TestResource(t *testing.T) {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
+			completesTemplateCtx, completesTemplateCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer completesTemplateCancel()
+
+			_, err = s.mcpClient.CompletesResourceTemplate(completesTemplateCtx, mcp.CompletesCompletionParams{
 				Ref: mcp.CompletionRef{
 					Type: mcp.CompletionRefResource,
 					Name: "test-resource",
@@ -468,14 +527,20 @@ func TestResource(t *testing.T) {
 				t.Errorf("expected error, got nil")
 			}
 
-			err = s.mcpClient.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
+			subscribeCtx, subscribeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer subscribeCancel()
+
+			err = s.mcpClient.SubscribeResource(subscribeCtx, mcp.SubscribeResourceParams{
 				URI: "test://resource",
 			})
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 
-			err = s.mcpClient.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
+			unsubscribeCtx, unsubscribeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer unsubscribeCancel()
+
+			err = s.mcpClient.UnsubscribeResource(unsubscribeCtx, mcp.UnsubscribeResourceParams{
 				URI: "test://resource",
 			})
 			if err == nil {
@@ -504,7 +569,10 @@ func TestResource(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceServer(&resourceServer))
 
 		t.Run(fmt.Sprintf("%s/ListResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListResources(context.Background(), mcp.ListResourcesParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.ListResources(ctx, mcp.ListResourcesParams{
 				Cursor: "cursor",
 			})
 			if err != nil {
@@ -518,7 +586,10 @@ func TestResource(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/ReadResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ReadResource(context.Background(), mcp.ReadResourceParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.ReadResource(ctx, mcp.ReadResourceParams{
 				URI: "test://resource",
 			})
 			if err != nil {
@@ -532,7 +603,10 @@ func TestResource(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/ListResourceTemplates", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListResourceTemplates(context.Background(), mcp.ListResourceTemplatesParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.ListResourceTemplates(ctx, mcp.ListResourceTemplatesParams{
 				Meta: mcp.ParamsMeta{
 					ProgressToken: "progressToken",
 				},
@@ -549,7 +623,10 @@ func TestResource(t *testing.T) {
 
 		t.Run(fmt.Sprintf("%s/CompletesResourceTemplate", transportName),
 			testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-				_, err := s.mcpClient.CompletesResourceTemplate(context.Background(), mcp.CompletesCompletionParams{
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				_, err := s.mcpClient.CompletesResourceTemplate(ctx, mcp.CompletesCompletionParams{
 					Ref: mcp.CompletionRef{
 						Type: mcp.CompletionRefResource,
 						Name: "test-resource",
@@ -578,7 +655,10 @@ func TestResource(t *testing.T) {
 		t.Run(fmt.Sprintf("%s/SubscribeResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(resourceSubscriptionHandler.done)
 
-			err := s.mcpClient.SubscribeResource(context.Background(), mcp.SubscribeResourceParams{
+			subscribeCtx, subscribeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer subscribeCancel()
+
+			err := s.mcpClient.SubscribeResource(subscribeCtx, mcp.SubscribeResourceParams{
 				URI: "test://resource",
 			})
 			if err != nil {
@@ -602,7 +682,10 @@ func TestResource(t *testing.T) {
 				t.Errorf("expected 5 resource subscribed, got %d", resourceSubscriptionWatcher.updateCount)
 			}
 
-			err = s.mcpClient.UnsubscribeResource(context.Background(), mcp.UnsubscribeResourceParams{
+			unsubscribeCtx, unsubscribeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer unsubscribeCancel()
+
+			err = s.mcpClient.UnsubscribeResource(unsubscribeCtx, mcp.UnsubscribeResourceParams{
 				URI: "test://resource",
 			})
 			if err != nil {
@@ -663,14 +746,20 @@ func TestTool(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListTools(context.Background(), mcp.ListToolsParams{
+			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer listCancel()
+
+			_, err := s.mcpClient.ListTools(listCtx, mcp.ListToolsParams{
 				Cursor: "cursor",
 			})
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
 
-			_, err = s.mcpClient.CallTool(context.Background(), mcp.CallToolParams{
+			callCtx, callCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer callCancel()
+
+			_, err = s.mcpClient.CallTool(callCtx, mcp.CallToolParams{
 				Name: "test-tool",
 			})
 			if err == nil {
@@ -681,7 +770,10 @@ func TestTool(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/ListTools", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.ListTools(context.Background(), mcp.ListToolsParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.ListTools(ctx, mcp.ListToolsParams{
 				Cursor: "cursor",
 			})
 			if err != nil {
@@ -705,7 +797,10 @@ func TestTool(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/CallTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-			_, err := s.mcpClient.CallTool(context.Background(), mcp.CallToolParams{
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			_, err := s.mcpClient.CallTool(ctx, mcp.CallToolParams{
 				Name: "test-tool",
 			})
 			if err != nil {
@@ -729,7 +824,8 @@ func TestTool(t *testing.T) {
 func TestRoot(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		rootsListUpdater := mockRootsListUpdater{
-			ch: make(chan struct{}),
+			ch:   make(chan struct{}),
+			done: make(chan struct{}),
 		}
 		rootsListWatcher := mockRootsListWatcher{}
 
@@ -744,6 +840,8 @@ func TestRoot(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UpdateRootList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			defer close(rootsListUpdater.done)
+
 			for i := 0; i < 5; i++ {
 				rootsListUpdater.ch <- struct{}{}
 			}
@@ -777,7 +875,7 @@ func TestLog(t *testing.T) {
 			},
 		}
 
-		t.Run(fmt.Sprintf("%s/LogStream", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+		testFunc := testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(handler.done)
 
 			handler.level = mcp.LogLevelDebug
@@ -792,66 +890,69 @@ func TestLog(t *testing.T) {
 			if receiver.updateCount != 10 {
 				t.Errorf("expected 10 log params, got %d", receiver.updateCount)
 			}
-		}))
 
-		// t.Run(fmt.Sprintf("%s/SetLogLevel", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-		// 	defer close(handler.done)
-		// 	err := s.mcpClient.SetLogLevel(mcp.LogLevelError)
-		// 	if err != nil {
-		// 		t.Errorf("unexpected error: %v", err)
-		// 	}
-		//
-		// 	time.Sleep(100 * time.Millisecond)
-		//
-		// 	handler.lock.Lock()
-		// 	defer handler.lock.Unlock()
-		// 	if handler.level != mcp.LogLevelError {
-		// 		t.Errorf("expected log level %d, got %d", mcp.LogLevelError, handler.level)
-		// 	}
-		// }))
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			err := s.mcpClient.SetLogLevel(ctx, mcp.LogLevelError)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			time.Sleep(100 * time.Millisecond)
+
+			handler.lock.Lock()
+			defer handler.lock.Unlock()
+			if handler.level != mcp.LogLevelError {
+				t.Errorf("expected log level %d, got %d", mcp.LogLevelError, handler.level)
+			}
+		})
+
+		testFunc(t)
 	}
 }
 
-// func TestServerPingAutoClose(t *testing.T) {
-// 	for _, transportName := range []string{"SSE"} {
-// 		clientCount := int64(0)
-//
-// 		cfg := testSuiteConfig{
-// 			transportName: transportName,
-// 			server:        &mockServer{},
-// 			serverOptions: []mcp.ServerOption{
-// 				mcp.WithServerPingTimeoutThreshold(3),
-// 				mcp.WithServerPingInterval(1 * time.Second), // Very frequent pings
-// 				mcp.WithServerOnClientConnected(func(string, mcp.Info) {
-// 					atomic.AddInt64(&clientCount, 1)
-// 				}),
-// 				mcp.WithServerOnClientDisconnected(func(string) {
-// 					atomic.AddInt64(&clientCount, -1)
-// 				}),
-// 			},
-// 		}
-//
-// 		t.Run(fmt.Sprintf("%s/ConsecutiveFailedPing", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
-// 			// At first, the client count should be one
-// 			if atomic.LoadInt64(&clientCount) != 1 {
-// 				t.Errorf("expected client count 1, got %d", atomic.LoadInt64(&clientCount))
-// 			}
-//
-// 			// Disconnects client
-// 			s.clientCancel()
-//
-// 			// Wait until failed ping exceeds threshold
-// 			time.Sleep(5 * time.Second)
-//
-// 			log.Printf("Waiting for client count to be zero")
-//
-// 			// Should be zero as the client is disconnected
-// 			if atomic.LoadInt64(&clientCount) != 0 {
-// 				t.Errorf("expected client count 0, got %d", atomic.LoadInt64(&clientCount))
-// 			}
-// 		}))
-// 	}
-// }
+func TestPing(t *testing.T) {
+	for _, transportName := range []string{"SSE", "StdIO"} {
+		// Variables to track the number of server and client connections.
+		serverClientsCount := int64(0)
+		clientPingFailedCount := int64(0)
+
+		cfg := testSuiteConfig{
+			transportName: transportName,
+			serverOptions: []mcp.ServerOption{
+				mcp.WithServerPingInterval(100 * time.Millisecond),
+				mcp.WithServerPingTimeout(50 * time.Millisecond),
+				mcp.WithServerPingTimeoutThreshold(5),
+				mcp.WithServerOnClientConnected(func(string, mcp.Info) {
+					atomic.AddInt64(&serverClientsCount, 1)
+				}),
+			},
+			clientOptions: []mcp.ClientOption{
+				mcp.WithClientPingInterval(100 * time.Millisecond),
+				mcp.WithClientPingTimeout(50 * time.Millisecond),
+				mcp.WithClientOnPingFailed(func(error) {
+					atomic.AddInt64(&clientPingFailedCount, 1)
+				}),
+			},
+		}
+
+		testFunc := testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+			// Wait for a few ping intervals to ensure multiple ping cycles occur
+			time.Sleep(1 * time.Second)
+
+			// Verify that the server and client are still connected
+			if atomic.LoadInt64(&serverClientsCount) != 1 {
+				t.Errorf("expected server and client to be connected, got %d", serverClientsCount)
+			}
+			if atomic.LoadInt64(&clientPingFailedCount) != 0 {
+				t.Errorf("expected client to not have failed pings, got %d", clientPingFailedCount)
+			}
+		})
+
+		testFunc(t)
+	}
+}
 
 func testSuiteCase(cfg testSuiteConfig, test func(*testing.T, *testSuite)) func(*testing.T) {
 	return func(t *testing.T) {
@@ -881,9 +982,17 @@ func setupSSE() (mcp.SSEServer, *mcp.SSEClient, *httptest.Server) {
 	return srv, cli, httpSrv
 }
 
-func setupStdIO() (mcp.StdIO, mcp.StdIO, *io.PipeReader, *io.PipeWriter, *io.PipeReader, *io.PipeWriter) {
-	srvReader, srvWriter := io.Pipe()
-	cliReader, cliWriter := io.Pipe()
+func setupStdIO() (mcp.StdIO, mcp.StdIO, *os.File, *os.File, *os.File, *os.File) {
+	// Use os.Pipe instad of io.Pipe to reduce flakiness due to pipe buffering.
+	srvReader, srvWriter, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
+
+	cliReader, cliWriter, err := os.Pipe()
+	if err != nil {
+		panic(err)
+	}
 
 	// server's output is client's input
 	srvIO := mcp.NewStdIO(srvReader, cliWriter)
@@ -915,9 +1024,6 @@ func (t *testSuite) setup() {
 		t.serverTransport, t.clientTransport, t.srvIOReader, t.srvIOWriter, t.cliIOReader, t.cliIOWriter = setupStdIO()
 	}
 
-	clientCtx, clientCancel := context.WithCancel(context.Background())
-	t.clientCancel = clientCancel
-
 	t.mcpServer = mcp.NewServer(mcp.Info{
 		Name:    "test-server",
 		Version: "1.0",
@@ -930,24 +1036,16 @@ func (t *testSuite) setup() {
 		Version: "1.0",
 	}, t.clientTransport, t.cfg.clientOptions...)
 
-	ready := make(chan struct{})
-	errs := make(chan error)
+	clientCtx, clientCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer clientCancel()
 
-	go func() {
-		errs <- t.mcpClient.Connect(clientCtx, ready)
-	}()
-
-	timeout := time.After(50 * time.Millisecond)
-
-	select {
-	case <-timeout:
-	case t.clientConnectErr = <-errs:
+	if err := t.mcpClient.Connect(clientCtx); err != nil {
+		t.clientConnectErr = err
 	}
-	<-ready
 }
 
 func (t *testSuite) teardown(tt *testing.T) {
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer shutdownCancel()
 
 	err := t.mcpServer.Shutdown(shutdownCtx)
@@ -955,7 +1053,11 @@ func (t *testSuite) teardown(tt *testing.T) {
 		tt.Errorf("failed to shutdown server: %v", err)
 	}
 
-	t.clientCancel()
+	err = t.mcpClient.Disconnect(shutdownCtx)
+	if err != nil {
+		tt.Errorf("failed to disconnect client: %v", err)
+	}
+
 	if t.cfg.transportName == "SSE" {
 		t.httpServer.Close()
 		return

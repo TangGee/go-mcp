@@ -10,6 +10,8 @@ import (
 	"iter"
 	"log/slog"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // StdIO implements a standard input/output transport layer for MCP communication using
@@ -67,32 +69,28 @@ func (s StdIO) Sessions() iter.Seq[Session] {
 }
 
 // Shutdown implements the ServerTransport interface by closing the session.
-func (s StdIO) Shutdown(context.Context) error {
-	// We don't need to do anything here, since StdIO is only supports a single session,
-	// and we leave it at the stopping of session.
+func (s StdIO) Shutdown(ctx context.Context) error {
+	// Wait for Sessions loop to breaks.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.closed:
+	}
 	return nil
-}
-
-// Send implements the ClientTransport interface by transmitting a JSON-RPC message to
-// the server through the established session. The context can be used to control the
-// transmission timeout.
-func (s StdIO) Send(_ context.Context, msg JSONRPCMessage) error {
-	return s.sess.Send(msg)
 }
 
 // StartSession implements the ClientTransport interface by initializing a new session
 // and returning an iterator for receiving server messages. The ready channel is closed
 // immediately to indicate session establishment.
-func (s StdIO) StartSession(_ context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error) {
-	close(ready)
-	return s.sess.Messages(), nil
+func (s StdIO) StartSession(_ context.Context) (Session, error) {
+	return s.sess, nil
 }
 
 func (s stdIOSession) ID() string {
-	return "1"
+	return uuid.New().String()
 }
 
-func (s stdIOSession) Send(msg JSONRPCMessage) error {
+func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	msgBs, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -100,25 +98,23 @@ func (s stdIOSession) Send(msg JSONRPCMessage) error {
 	// Append newline to maintain message framing protocol
 	msgBs = append(msgBs, '\n')
 
-	errs := make(chan error, 1)
+	errs := make(chan error)
 
 	// Spawn a goroutine for writing to prevent blocking on slow writers
 	// while still respecting context cancellation or done channel.
 	go func() {
-		// Safeguard to make sure the session is still alive
-		select {
-		case <-s.done:
-			s.logger.Warn("session is closed while writing message", slog.String("message", string(msgBs)))
-			return
-		default:
-		}
-
 		_, err = s.writer.Write(msgBs)
 		if err != nil {
-			errs <- fmt.Errorf("failed to write message: %w", err)
+			select {
+			case errs <- fmt.Errorf("failed to write message: %w", err):
+			default:
+			}
 			return
 		}
-		errs <- nil
+		select {
+		case errs <- nil:
+		default:
+		}
 	}()
 
 	select {
@@ -127,6 +123,9 @@ func (s stdIOSession) Send(msg JSONRPCMessage) error {
 			s.logger.Error("failed to send message", slog.String("err", err.Error()))
 		}
 		return err
+	case <-ctx.Done():
+		s.logger.Error("failed to send message", slog.String("err", ctx.Err().Error()))
+		return ctx.Err()
 	case <-s.done:
 		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
 		return nil
@@ -152,10 +151,16 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 			go func() {
 				line, err := reader.ReadString('\n')
 				if err != nil {
-					lines <- lineWithErr{err: err}
+					select {
+					case lines <- lineWithErr{err: err}:
+					default:
+					}
 					return
 				}
-				lines <- lineWithErr{line: strings.TrimSuffix(line, "\n")}
+				select {
+				case lines <- lineWithErr{line: strings.TrimSuffix(line, "\n")}:
+				default:
+				}
 			}()
 
 			var lwe lineWithErr

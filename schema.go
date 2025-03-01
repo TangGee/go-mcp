@@ -503,12 +503,6 @@ const (
 
 	protocolVersion = "2024-11-05"
 
-	errMsgInvalidJSON                    = "Invalid json"
-	errMsgUnsupportedProtocolVersion     = "Unsupported protocol version"
-	errMsgInsufficientClientCapabilities = "Insufficient client capabilities"
-	errMsgWriteTimeout                   = "Write timeout"
-	errMsgReadTimeout                    = "Read timeout"
-
 	methodPing       = "ping"
 	methodInitialize = "initialize"
 

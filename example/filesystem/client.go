@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/MegaGrindStone/go-mcp"
 	"github.com/MegaGrindStone/go-mcp/servers/filesystem"
@@ -33,7 +34,10 @@ func newClient(transport mcp.ClientTransport) client {
 	cli := mcp.NewClient(mcp.Info{
 		Name:    "fileserver-client",
 		Version: "1.0",
-	}, transport)
+	}, transport,
+		mcp.WithClientPingInterval(10*time.Second),
+		mcp.WithClientPingTimeout(5*time.Second),
+	)
 
 	return client{
 		cli:       cli,
@@ -47,16 +51,11 @@ func newClient(transport mcp.ClientTransport) client {
 func (c client) run(rootPath string) {
 	defer c.stop()
 
-	ready := make(chan struct{})
-
-	go func() {
-		if err := c.cli.Connect(c.ctx, ready); err != nil {
-			fmt.Printf("failed to connect to server: %v\n", err)
-			return
-		}
-	}()
+	if err := c.cli.Connect(c.ctx); err != nil {
+		fmt.Printf("failed to connect to server: %v\n", err)
+		return
+	}
 	go c.listenInterruptSignal()
-	<-ready
 
 	for {
 		tools, err := c.cli.ListTools(c.ctx, mcp.ListToolsParams{})

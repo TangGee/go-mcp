@@ -30,7 +30,8 @@ type mockRootsListHandler struct {
 }
 
 type mockRootsListUpdater struct {
-	ch chan struct{}
+	ch   chan struct{}
+	done chan struct{}
 }
 
 type mockSamplingHandler struct {
@@ -79,9 +80,14 @@ func (m *mockRootsListHandler) RootsList(context.Context) (mcp.RootList, error) 
 
 func (m mockRootsListUpdater) RootsListUpdates() iter.Seq[struct{}] {
 	return func(yield func(struct{}) bool) {
-		for range m.ch {
-			if !yield(struct{}{}) {
+		for {
+			select {
+			case <-m.done:
 				return
+			case <-m.ch:
+				if !yield(struct{}{}) {
+					return
+				}
 			}
 		}
 	}

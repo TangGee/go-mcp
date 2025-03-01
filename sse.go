@@ -50,7 +50,10 @@ type SSEClient struct {
 
 	maxPayloadSize int
 
+	requestCancel context.CancelFunc
+
 	messages chan JSONRPCMessage
+	closed   chan struct{}
 }
 
 // SSEClientOption represents the options for the SSEClient.
@@ -106,7 +109,8 @@ func NewSSEClient(connectURL string, httpClient *http.Client, options ...SSEClie
 		connectURL: connectURL,
 		httpClient: cli,
 		logger:     slog.Default(),
-		messages:   make(chan JSONRPCMessage),
+		messages:   make(chan JSONRPCMessage, 10),
+		closed:     make(chan struct{}),
 	}
 
 	for _, opt := range options {
@@ -288,6 +292,67 @@ func (s SSEServer) HandleMessage() http.Handler {
 	})
 }
 
+// StartSession establishes the SSE connection and begins message processing. It sends
+// connection status through the ready channel and returns an iterator for received server
+// messages. The connection remains active until the context is cancelled or an error occurs.
+func (s *SSEClient) StartSession(ctx context.Context) (Session, error) {
+	// We cannot use the ctx as the parent context because the caller may cancel the context
+	// after calling this function. Since we need a long-lived context, we create a new one, and store
+	// the cancel function so we can cancel it when we want to stop the session.
+	reqCtx, reqCancel := context.WithCancel(context.Background())
+	s.requestCancel = reqCancel
+
+	// But we still need to cancel the request, if the cancellation is happen while the server is not responsing yet,
+	// or we still haven't finished the initialization process.
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			// If the cancellation come first, then cancel the request.
+			reqCancel()
+		case <-done:
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, s.connectURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SSE server: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	// Start the sse message listener, and wait until we receive initialization response from the server.
+	initErrs := make(chan error)
+
+	go s.listenSSEMessages(resp.Body, initErrs)
+
+	// Wait for initialization response or context cancellation.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case err := <-initErrs:
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return s, nil
+}
+
+// ID returns the unique identifier for this session.
+func (s *SSEClient) ID() string {
+	return uuid.New().String()
+}
+
 // Send transmits a JSON-encoded message to the server through an HTTP POST request. The
 // provided context allows request cancellation. Returns an error if message encoding fails,
 // the request cannot be created, or the server responds with a non-200 status code.
@@ -317,39 +382,32 @@ func (s *SSEClient) Send(ctx context.Context, msg JSONRPCMessage) error {
 	return nil
 }
 
-// StartSession establishes the SSE connection and begins message processing. It sends
-// connection status through the ready channel and returns an iterator for received server
-// messages. The connection remains active until the context is cancelled or an error occurs.
-func (s *SSEClient) StartSession(ctx context.Context, ready chan<- error) (iter.Seq[JSONRPCMessage], error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.connectURL, nil)
-	if err != nil {
-		close(ready)
-		return nil, fmt.Errorf("failed to create request: %w", err)
+// Messages returns an iterator over received messages from the server.
+func (s *SSEClient) Messages() iter.Seq[JSONRPCMessage] {
+	return func(yield func(JSONRPCMessage) bool) {
+		defer close(s.closed)
+
+		for msg := range s.messages {
+			if !yield(msg) {
+				return
+			}
+		}
 	}
-
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		close(ready)
-		return nil, fmt.Errorf("failed to connect to SSE server: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		close(ready)
-		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	go s.listenSSEMessages(resp.Body, ready)
-
-	return s.listenMessages(), nil
 }
 
-func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
-	defer func() {
-		body.Close()
-		close(s.messages)
-	}()
+// Stop gracefully shuts down the SSE client by closing the sse body.
+func (s *SSEClient) Stop() {
+	// Cancel the request context that made for starting the session to signal the shutdown.
+	s.requestCancel()
 
+	// Wait for the main loop to finish.
+	<-s.closed
+}
+
+func (s *SSEClient) listenSSEMessages(body io.ReadCloser, initErrs chan<- error) {
+	defer close(s.messages)
+
+	// The default value defined in the sse library is 65 KB, set this config if user set a custom value.
 	var config *sse.ReadConfig
 	if s.maxPayloadSize > 0 {
 		config = &sse.ReadConfig{
@@ -357,10 +415,11 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 		}
 	}
 
+	// This session would break when the Stop is called, as we cancel the context for this long-lived request.
 	for ev, err := range sse.Read(body, config) {
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
-				s.logger.Error("failed to read SSE message", "err", err)
+				s.logger.Error("failed to read SSE message", slog.String("err", err.Error()))
 			}
 			return
 		}
@@ -372,51 +431,40 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, ready chan<- error) {
 			// ensure that messages are sent to the correct destination.
 			u, err := url.Parse(ev.Data)
 			if err != nil {
-				ready <- fmt.Errorf("parse endpoint URL: %w", err)
+				initErrs <- fmt.Errorf("parse endpoint URL: %w", err)
 				return
 			}
 			if u.String() == "" {
-				ready <- errors.New("empty endpoint URL")
+				initErrs <- errors.New("empty endpoint URL")
 				return
 			}
 			s.messageURL = u.String()
-			close(ready)
+			close(initErrs)
 		case "message":
-			// Enforce strict message processing:
-			// 1. Require an endpoint URL to be set before processing any messages
-			// 2. Prevents processing messages before connection is fully established
-			// 3. Provides an additional layer of connection state validation
 			if s.messageURL == "" {
+				// This should not happen, as we cannot receive message, if we didn't request it to the messageURL,
+				// but just in case, we should log it.
 				s.logger.Error("received message before endpoint URL")
 				continue
 			}
 
 			var msg JSONRPCMessage
 			if err := json.Unmarshal([]byte(ev.Data), &msg); err != nil {
-				s.logger.Error("failed to unmarshal message", "err", err)
+				s.logger.Error("failed to unmarshal message", slog.String("err", err.Error()))
 				continue
 			}
 
 			s.messages <- msg
+
 		default:
 			s.logger.Error("unhandled event type", "type", ev.Type)
 		}
 	}
 }
 
-func (s *SSEClient) listenMessages() iter.Seq[JSONRPCMessage] {
-	return func(yield func(JSONRPCMessage) bool) {
-		for msg := range s.messages {
-			if !yield(msg) {
-				return
-			}
-		}
-	}
-}
-
 func (s sseServerSession) ID() string { return s.id }
 
-func (s sseServerSession) Send(msg JSONRPCMessage) error {
+func (s sseServerSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	msgBs, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -432,6 +480,8 @@ func (s sseServerSession) Send(msg JSONRPCMessage) error {
 	// Queue the message for sending to avoid race in the sse library
 	select {
 	case s.sendMsgs <- sseServerSessionSendMsg{sseMsg, errs}:
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-s.done:
 		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
 		return fmt.Errorf("session is closed")
@@ -441,6 +491,8 @@ func (s sseServerSession) Send(msg JSONRPCMessage) error {
 	select {
 	case err := <-errs:
 		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-s.done:
 		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
 		return fmt.Errorf("session is closed")

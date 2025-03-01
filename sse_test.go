@@ -39,42 +39,37 @@ func TestSSEServerAndClient(t *testing.T) {
 	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
 
 	// Start client session
-	ready := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	msgs, err := client.StartSession(ctx, ready)
+	clientSession, err := client.StartSession(ctx)
 	if err != nil {
 		t.Fatalf("failed to start session: %v", err)
 	}
-
-	// Wait for connection to be ready
-	if err := <-ready; err != nil {
-		t.Fatalf("connection not ready: %v", err)
-	}
+	defer clientSession.Stop()
 
 	// Test sending message from server to client
 	var receivedByClient mcp.JSONRPCMessage
 	done := make(chan struct{})
 
 	go func() {
-		for msg := range msgs {
+		for msg := range clientSession.Messages() {
 			receivedByClient = msg
 			close(done)
 			break
 		}
 	}()
 
-	// Wait for first client session
-	var session mcp.Session
+	// Wait for first server session
+	var serverSession mcp.Session
 	sessions := make(chan mcp.Session, 1)
 	go func() {
 		for s := range server.Sessions() {
 			sessions <- s
 		}
 	}()
-	session = <-sessions
-	defer session.Stop()
+	serverSession = <-sessions
+	defer serverSession.Stop()
 
 	// Send message from server to client
 	serverMsg := mcp.JSONRPCMessage{
@@ -82,7 +77,11 @@ func TestSSEServerAndClient(t *testing.T) {
 		Method:  "test",
 		Params:  json.RawMessage(`{"test": "hello"}`),
 	}
-	if err := session.Send(serverMsg); err != nil {
+
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer sendCancel()
+
+	if err := serverSession.Send(sendCtx, serverMsg); err != nil {
 		t.Fatalf("failed to send server message: %v", err)
 	}
 
@@ -108,7 +107,7 @@ func TestSSEServerAndClient(t *testing.T) {
 	serverDone := make(chan struct{})
 
 	go func() {
-		for msg := range session.Messages() {
+		for msg := range serverSession.Messages() {
 			receivedByServer = msg
 			close(serverDone)
 			break
@@ -189,19 +188,17 @@ func TestSSEServerMultipleClients(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 
-			ready := make(chan error, 1)
-			msgs, err := client.StartSession(ctx, ready)
+			cliSession, err := client.StartSession(ctx)
 			if err != nil {
 				t.Logf("Failed to start session: %v", err)
 				return
 			}
+			defer cliSession.Stop()
 
 			// Concurrent message sending and receiving
-			go func() {
-				for msg := range msgs {
-					t.Logf("Received message: %v", msg)
-				}
-			}()
+			for msg := range cliSession.Messages() {
+				t.Logf("Received message: %v", msg)
+			}
 		}()
 	}
 
@@ -218,8 +215,7 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		ready := make(chan error, 1)
-		_, err := client.StartSession(ctx, ready)
+		_, err := client.StartSession(ctx)
 
 		if err == nil {
 			t.Fatal("Expected an error when connecting to invalid URL, got nil")
@@ -315,8 +311,7 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 		// Add a small delay to ensure context is cancelled
 		time.Sleep(500 * time.Millisecond)
 
-		ready := make(chan error, 1)
-		_, err := client.StartSession(ctx, ready)
+		_, err := client.StartSession(ctx)
 
 		if err == nil {
 			t.Fatal("Expected a timeout error, got nil")
@@ -352,15 +347,11 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		ready := make(chan error, 1)
-		msgs, err := client.StartSession(ctx, ready)
+		clientSession, err := client.StartSession(ctx)
 		if err != nil {
 			t.Fatalf("Failed to start session: %v", err)
 		}
-
-		if err := <-ready; err != nil {
-			t.Fatalf("connection not ready: %v", err)
-		}
+		defer clientSession.Stop()
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer shutdownCancel()
@@ -373,7 +364,7 @@ func TestSSEConnectionNegativeCases(t *testing.T) {
 		testServer.Close()
 
 		msgReceived := false
-		for range msgs {
+		for range clientSession.Messages() {
 			msgReceived = true
 		}
 
@@ -408,19 +399,14 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
 
 	// Start client session
-	ready := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	msgs, err := client.StartSession(ctx, ready)
+	cliSession, err := client.StartSession(ctx)
 	if err != nil {
 		t.Fatalf("failed to start session: %v", err)
 	}
-
-	// Wait for connection to be ready
-	if err := <-ready; err != nil {
-		t.Fatalf("connection not ready: %v", err)
-	}
+	defer cliSession.Stop()
 
 	// Prepare a series of messages for bidirectional communication
 	testMessages := []mcp.JSONRPCMessage{
@@ -436,16 +422,16 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 		},
 	}
 
-	// Wait for first client session
-	var session mcp.Session
+	// Wait for first server session
+	var srvSession mcp.Session
 	sessions := make(chan mcp.Session, 1)
 	go func() {
 		for s := range server.Sessions() {
 			sessions <- s
 		}
 	}()
-	session = <-sessions
-	defer session.Stop()
+	srvSession = <-sessions
+	defer srvSession.Stop()
 
 	// Channels to track message exchanges
 	clientReceivedMsgs := make([]mcp.JSONRPCMessage, 0)
@@ -454,7 +440,7 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	// Goroutine to receive messages on the client side
 	clientMsgChan := make(chan mcp.JSONRPCMessage, len(testMessages))
 	go func() {
-		for msg := range msgs {
+		for msg := range cliSession.Messages() {
 			clientMsgChan <- msg
 		}
 		close(clientMsgChan)
@@ -463,7 +449,7 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	// Goroutine to receive messages on the server side
 	serverMsgChan := make(chan mcp.JSONRPCMessage, len(testMessages))
 	go func() {
-		for msg := range session.Messages() {
+		for msg := range srvSession.Messages() {
 			serverMsgChan <- msg
 		}
 		close(serverMsgChan)
@@ -471,10 +457,12 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 
 	// Send messages in both directions
 	for _, msg := range testMessages {
+		sendCtx, sendCancel := context.WithTimeout(context.Background(), 1*time.Second)
 		// Server to client
-		if err := session.Send(msg); err != nil {
+		if err := srvSession.Send(sendCtx, msg); err != nil {
 			t.Fatalf("failed to send server message: %v", err)
 		}
+		sendCancel()
 
 		// Client to server
 		clientResponseMsg := mcp.JSONRPCMessage{
@@ -549,40 +537,14 @@ func TestSSELargeMessagePayload(t *testing.T) {
 		testServer.Close()
 	}()
 
-	// Create client
-	client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client(),
-		mcp.WithSSEClientMaxPayloadSize(1*1024*1024)) // 1 MB
-
-	// Start client session
-	ready := make(chan error, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	msgs, err := client.StartSession(ctx, ready)
-	if err != nil {
-		t.Fatalf("failed to start session: %v", err)
-	}
-
-	// Wait for connection to be ready
-	if err := <-ready; err != nil {
-		t.Fatalf("connection not ready: %v", err)
-	}
-
-	// Wait for first client session
-	var session mcp.Session
+	// Wait for client sessions
+	var srvSession mcp.Session
 	sessions := make(chan mcp.Session, 1)
 	go func() {
 		for s := range server.Sessions() {
 			sessions <- s
 		}
 	}()
-	session = <-sessions
-	go func(sess mcp.Session) {
-		for msg := range sess.Messages() {
-			t.Logf("received message: %s", msg.Method)
-		}
-	}(session)
-	defer session.Stop()
 
 	// Generate a large payload with varying sizes
 	payloadSizes := []int{
@@ -593,6 +555,28 @@ func TestSSELargeMessagePayload(t *testing.T) {
 
 	for _, size := range payloadSizes {
 		t.Run(fmt.Sprintf("PayloadSize_%d", size), func(t *testing.T) {
+			// Create client
+			client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client(),
+				mcp.WithSSEClientMaxPayloadSize(1*1024*1024)) // 1 MB
+
+			// Start client session
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			cliSession, err := client.StartSession(ctx)
+			if err != nil {
+				t.Fatalf("failed to start session: %v", err)
+			}
+			defer cliSession.Stop()
+
+			srvSession = <-sessions
+			go func(sess mcp.Session) {
+				for msg := range sess.Messages() {
+					t.Logf("received message: %s", msg.Method)
+				}
+			}(srvSession)
+			defer srvSession.Stop()
+
 			// Generate random payload
 			// This payload is required to be JSON message, instead of fully random bytes, because we want to test the
 			// handling of the message payload in the server, not failing on unmarshalling the JSON.
@@ -610,14 +594,17 @@ func TestSSELargeMessagePayload(t *testing.T) {
 
 			// Goroutine to receive message
 			go func() {
-				for msg := range msgs {
+				for msg := range cliSession.Messages() {
 					receivedChan <- msg
 					break
 				}
 			}()
 
+			sendCtx, sendCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer sendCancel()
+
 			// Send large message from server to client
-			if err := session.Send(largeMsg); err != nil {
+			if err := srvSession.Send(sendCtx, largeMsg); err != nil {
 				t.Fatalf("failed to send large message: %v", err)
 			}
 

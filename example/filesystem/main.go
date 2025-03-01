@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"time"
 
@@ -24,8 +23,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	srvReader, srvWriter := io.Pipe()
-	cliReader, cliWriter := io.Pipe()
+	srvReader, srvWriter, err := os.Pipe()
+	if err != nil {
+		fmt.Println("Error: failed to create pipes:", err)
+		os.Exit(1)
+	}
+
+	cliReader, cliWriter, err := os.Pipe()
+	if err != nil {
+		fmt.Println("Error: failed to create pipes:", err)
+		os.Exit(1)
+	}
 
 	cliIO := mcp.NewStdIO(cliReader, srvWriter)
 	srvIO := mcp.NewStdIO(srvReader, cliWriter)
@@ -40,7 +48,8 @@ func main() {
 		Name:    "filesystem",
 		Version: "1.0",
 	}, srvIO,
-		mcp.WithServerPingInterval(30*time.Second),
+		mcp.WithServerPingInterval(10*time.Second),
+		mcp.WithServerPingTimeout(5*time.Second),
 		mcp.WithToolServer(server),
 	)
 
@@ -51,8 +60,18 @@ func main() {
 
 	<-cli.done
 
-	if err := srv.Shutdown(context.Background()); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	err = srv.Shutdown(shutdownCtx)
+	if err != nil {
 		fmt.Printf("Server forced to shutdown: %v", err)
+		return
+	}
+
+	err = cli.cli.Disconnect(shutdownCtx)
+	if err != nil {
+		fmt.Printf("Client forced to shutdown: %v", err)
 		return
 	}
 }

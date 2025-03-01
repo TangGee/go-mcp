@@ -129,7 +129,7 @@ func (m *mockResourceServer) ListResources(
 		select {
 		case <-ctx.Done():
 			return mcp.ListResourcesResult{}, ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 	m.listParams = params

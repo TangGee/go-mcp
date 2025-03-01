@@ -46,7 +46,9 @@ type Server struct {
 	logHandler LogHandler
 
 	pingInterval         time.Duration
+	pingTimeout          time.Duration
 	pingTimeoutThreshold int
+	sendTimeout          time.Duration
 
 	logger *slog.Logger
 
@@ -73,7 +75,9 @@ type serverSession struct {
 	instructions      string
 
 	pingInterval         time.Duration
+	pingTimeout          time.Duration
 	pingTimeoutThreshold int
+	sendTimeout          time.Duration
 
 	promptServer                PromptServer
 	resourceServer              ResourceServer
@@ -85,7 +89,9 @@ type serverSession struct {
 
 var (
 	defaultServerPingInterval         = 30 * time.Second
+	defaultServerPingTimeout          = 30 * time.Second
 	defaultServerPingTimeoutThreshold = 3
+	defaultServerSendTimeout          = 30 * time.Second
 
 	errInvalidJSON = errors.New("invalid json")
 )
@@ -110,8 +116,14 @@ func NewServer(info Info, transport ServerTransport, options ...ServerOption) Se
 	if s.pingInterval == 0 {
 		s.pingInterval = defaultServerPingInterval
 	}
+	if s.pingTimeout == 0 {
+		s.pingTimeout = defaultServerPingTimeout
+	}
 	if s.pingTimeoutThreshold == 0 {
 		s.pingTimeoutThreshold = defaultServerPingTimeoutThreshold
+	}
+	if s.sendTimeout == 0 {
+		s.sendTimeout = defaultServerSendTimeout
 	}
 
 	// Prepares the server's capabilities based on the provided server implementations.
@@ -252,11 +264,25 @@ func WithServerPingInterval(interval time.Duration) ServerOption {
 	}
 }
 
+// WithServerPingTimeout sets the ping timeout for the server.
+func WithServerPingTimeout(timeout time.Duration) ServerOption {
+	return func(s *Server) {
+		s.pingTimeout = timeout
+	}
+}
+
 // WithServerPingTimeoutThreshold sets the ping timeout threshold for the server.
 // If the number of consecutive ping timeouts exceeds the threshold, the server will close the session.
 func WithServerPingTimeoutThreshold(threshold int) ServerOption {
 	return func(s *Server) {
 		s.pingTimeoutThreshold = threshold
+	}
+}
+
+// WithServerSendTimeout sets the send timeout for the server.
+func WithServerSendTimeout(timeout time.Duration) ServerOption {
+	return func(s *Server) {
+		s.sendTimeout = timeout
 	}
 }
 
@@ -389,7 +415,9 @@ func (s Server) start(broadcasts <-chan JSONRPCMessage) {
 			serverInfo:                  s.info,
 			instructions:                s.instructions,
 			pingInterval:                s.pingInterval,
+			pingTimeout:                 s.pingTimeout,
 			pingTimeoutThreshold:        s.pingTimeoutThreshold,
+			sendTimeout:                 s.sendTimeout,
 			promptServer:                s.promptServer,
 			resourceServer:              s.resourceServer,
 			toolServer:                  s.toolServer,
@@ -439,14 +467,16 @@ func (s Server) broadcast(messages <-chan JSONRPCMessage, sessions <-chan server
 		case sessID := <-removedSession:
 			delete(sessMap, sessID)
 		case msg := <-messages:
+			ctx, cancel := context.WithTimeout(context.Background(), s.sendTimeout)
 			// Broadcast the message to all active sessions
 			for _, sess := range sessMap {
-				if err := sess.session.Send(msg); err != nil {
+				if err := sess.session.Send(ctx, msg); err != nil {
 					sess.logger.Error("failed to send message",
 						slog.Any("message", msg),
 						slog.String("err", err.Error()))
 				}
 			}
+			cancel()
 		}
 	}
 }
@@ -551,13 +581,15 @@ func (s serverSession) start(done <-chan struct{}) {
 
 		switch msg.Method {
 		case methodPing:
+			pongCtx, pongCancel := context.WithTimeout(context.Background(), s.pingTimeout)
 			// Send pong back to the client
-			if err := s.session.Send(JSONRPCMessage{
+			if err := s.session.Send(pongCtx, JSONRPCMessage{
 				JSONRPC: JSONRPCVersion,
 				ID:      msg.ID,
 			}); err != nil {
 				s.logger.Error("failed to send pong", slog.String("err", err.Error()))
 			}
+			pongCancel()
 		case methodInitialize:
 			// If the initialization request is invalid, we cannot call session.Stop() here,
 			// because it would make calling that function twice. Which in turn would cause
@@ -640,12 +672,15 @@ func (s serverSession) start(done <-chan struct{}) {
 }
 
 func (s serverSession) handleInitializeRequest(msg JSONRPCMessage) {
+	ctx, cancel := context.WithTimeout(context.Background(), s.sendTimeout)
+	defer cancel()
+
 	// Verify client's initialization request
 	res, err := s.initializationHandshake(msg)
 	if err != nil {
 		s.logger.Info("invalid initialization request", slog.String("err", err.Error()))
 		// Initialization failed, send the error to the client to notify them to close the session.
-		if err := s.session.Send(JSONRPCMessage{
+		if err := s.session.Send(ctx, JSONRPCMessage{
 			JSONRPC: JSONRPCVersion,
 			ID:      msg.ID,
 			Error: &JSONRPCError{
@@ -658,7 +693,7 @@ func (s serverSession) handleInitializeRequest(msg JSONRPCMessage) {
 		return
 	}
 	resBs, _ := json.Marshal(res)
-	if err := s.session.Send(JSONRPCMessage{
+	if err := s.session.Send(ctx, JSONRPCMessage{
 		JSONRPC: JSONRPCVersion,
 		ID:      msg.ID,
 		Result:  resBs,
@@ -695,16 +730,21 @@ func (s serverSession) ping(messageIDs <-chan MustString, done <-chan struct{}) 
 		case <-pingTicker.C:
 		}
 
+		ctx, cancel := context.WithTimeout(context.Background(), s.pingTimeout)
+
 		// Send the ping message to the client.
 		msgID = MustString(uuid.New().String())
-		if err := s.session.Send(JSONRPCMessage{
+
+		if err := s.session.Send(ctx, JSONRPCMessage{
 			JSONRPC: JSONRPCVersion,
 			ID:      msgID,
 			Method:  methodPing,
 		}); err != nil {
-			s.logger.Warn("failed to send ping", slog.String("err", err.Error()))
+			s.logger.Warn("failed to send ping to client",
+				slog.String("err", err.Error()))
 			failedPings++
 		}
+		cancel()
 	}
 }
 
@@ -779,7 +819,10 @@ func (s serverSession) handleServerImplementationMessage(
 		resMsg.Result, _ = json.Marshal(result)
 	}
 
-	if err := s.session.Send(resMsg); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), s.sendTimeout)
+	defer cancel()
+
+	if err := s.session.Send(ctx, resMsg); err != nil {
 		s.logger.Error("failed to send result", slog.String("err", err.Error()))
 	}
 }
@@ -849,7 +892,10 @@ func (s serverSession) progressReporter(msgID MustString) func(ProgressParams) {
 			Params:  paramsBs,
 		}
 
-		if err := s.session.Send(msg); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), s.sendTimeout)
+		defer cancel()
+
+		if err := s.session.Send(ctx, msg); err != nil {
 			s.logger.Error("failed to send message", "err", err)
 		}
 	}
@@ -857,9 +903,12 @@ func (s serverSession) progressReporter(msgID MustString) func(ProgressParams) {
 
 func (s serverSession) clientRequester(msgID MustString, results <-chan JSONRPCMessage) RequestClientFunc {
 	return func(msg JSONRPCMessage) (JSONRPCMessage, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), s.sendTimeout)
+		defer cancel()
+
 		// Override the message ID, so we can intercept the result correctly in the main loop.
 		msg.ID = msgID
-		if err := s.session.Send(msg); err != nil {
+		if err := s.session.Send(ctx, msg); err != nil {
 			return JSONRPCMessage{}, err
 		}
 
