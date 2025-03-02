@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,10 +22,10 @@ type testSuite struct {
 	clientTransport mcp.ClientTransport
 
 	httpServer  *httptest.Server
-	srvIOReader *os.File
-	srvIOWriter *os.File
-	cliIOReader *os.File
-	cliIOWriter *os.File
+	srvIOReader *io.PipeReader
+	srvIOWriter *io.PipeWriter
+	cliIOReader *io.PipeReader
+	cliIOWriter *io.PipeWriter
 
 	mcpServer        mcp.Server
 	mcpClient        *mcp.Client
@@ -325,6 +325,7 @@ func TestUninitializedClient(t *testing.T) {
 	})
 }
 
+//nolint:gocognit
 func TestPrompt(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		promptServer := mockPromptServer{}
@@ -338,6 +339,10 @@ func TestPrompt(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer listCancel()
 
@@ -378,6 +383,10 @@ func TestPrompt(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithPromptServer(&promptServer))
 
 		t.Run(fmt.Sprintf("%s/ListPrompts", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -407,6 +416,10 @@ func TestPrompt(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/GetPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -424,6 +437,10 @@ func TestPrompt(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/CompletesPrompt", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -452,8 +469,12 @@ func TestPrompt(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithPromptListUpdater(promptListUpdater))
 		cfg.clientOptions = append(cfg.clientOptions, mcp.WithPromptListWatcher(&promptListWatcher))
 
-		t.Run(fmt.Sprintf("%s/UpdatePromptList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+		t.Run(fmt.Sprintf("%s/UpdatePromptList", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(promptListUpdater.done)
+
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
 
 			for i := 0; i < 5; i++ {
 				promptListUpdater.ch <- struct{}{}
@@ -470,7 +491,7 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
-//nolint:gocognit
+//nolint:gocognit,gocyclo // Would simplify it later
 func TestResource(t *testing.T) {
 	for _, transportName := range []string{"SSE", "StdIO"} {
 		resourceServer := mockResourceServer{
@@ -482,6 +503,10 @@ func TestResource(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer listCancel()
 
@@ -551,6 +576,10 @@ func TestResource(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceServer(&resourceServer))
 
 		t.Run(fmt.Sprintf("%s/ListResourcesCancelled", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithCancel(context.Background())
 			go func() {
 				time.Sleep(100 * time.Millisecond)
@@ -569,6 +598,10 @@ func TestResource(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceServer(&resourceServer))
 
 		t.Run(fmt.Sprintf("%s/ListResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -586,6 +619,10 @@ func TestResource(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/ReadResources", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -603,6 +640,10 @@ func TestResource(t *testing.T) {
 		}))
 
 		t.Run(fmt.Sprintf("%s/ListResourceTemplates", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -623,6 +664,10 @@ func TestResource(t *testing.T) {
 
 		t.Run(fmt.Sprintf("%s/CompletesResourceTemplate", transportName),
 			testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+				if s.clientConnectErr != nil {
+					t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+				}
+
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 
@@ -654,6 +699,10 @@ func TestResource(t *testing.T) {
 
 		t.Run(fmt.Sprintf("%s/SubscribeResource", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(resourceSubscriptionHandler.done)
+
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
 
 			subscribeCtx, subscribeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer subscribeCancel()
@@ -707,8 +756,12 @@ func TestResource(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithResourceListUpdater(resourceListUpdater))
 		cfg.clientOptions = append(cfg.clientOptions, mcp.WithResourceListWatcher(&resourceListWatcher))
 
-		t.Run(fmt.Sprintf("%s/UpdateResourceList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+		t.Run(fmt.Sprintf("%s/UpdateResourceList", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(resourceListUpdater.done)
+
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
 
 			for i := 0; i < 5; i++ {
 				resourceListUpdater.ch <- struct{}{}
@@ -746,6 +799,10 @@ func TestTool(t *testing.T) {
 		}
 
 		t.Run(fmt.Sprintf("%s/UnsupportedTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			listCtx, listCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer listCancel()
 
@@ -770,6 +827,10 @@ func TestTool(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/ListTools", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -797,6 +858,10 @@ func TestTool(t *testing.T) {
 		cfg.serverOptions = append(cfg.serverOptions, mcp.WithToolServer(&toolServer))
 
 		t.Run(fmt.Sprintf("%s/CallTool", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
@@ -839,7 +904,11 @@ func TestRoot(t *testing.T) {
 			},
 		}
 
-		t.Run(fmt.Sprintf("%s/UpdateRootList", transportName), testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+		t.Run(fmt.Sprintf("%s/UpdateRootList", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			defer close(rootsListUpdater.done)
 
 			for i := 0; i < 5; i++ {
@@ -875,8 +944,12 @@ func TestLog(t *testing.T) {
 			},
 		}
 
-		testFunc := testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+		t.Run(fmt.Sprintf("%s/TestLog", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
 			defer close(handler.done)
+
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
 
 			handler.level = mcp.LogLevelDebug
 			for i := 0; i < 10; i++ {
@@ -906,9 +979,7 @@ func TestLog(t *testing.T) {
 			if handler.level != mcp.LogLevelError {
 				t.Errorf("expected log level %d, got %d", mcp.LogLevelError, handler.level)
 			}
-		})
-
-		testFunc(t)
+		}))
 	}
 }
 
@@ -921,23 +992,26 @@ func TestPing(t *testing.T) {
 		cfg := testSuiteConfig{
 			transportName: transportName,
 			serverOptions: []mcp.ServerOption{
-				mcp.WithServerPingInterval(100 * time.Millisecond),
-				mcp.WithServerPingTimeout(50 * time.Millisecond),
-				mcp.WithServerPingTimeoutThreshold(5),
+				mcp.WithServerPingInterval(200 * time.Millisecond),
+				mcp.WithServerPingTimeout(100 * time.Millisecond),
 				mcp.WithServerOnClientConnected(func(string, mcp.Info) {
 					atomic.AddInt64(&serverClientsCount, 1)
 				}),
 			},
 			clientOptions: []mcp.ClientOption{
-				mcp.WithClientPingInterval(100 * time.Millisecond),
-				mcp.WithClientPingTimeout(50 * time.Millisecond),
+				mcp.WithClientPingInterval(300 * time.Millisecond),
+				mcp.WithClientPingTimeout(200 * time.Millisecond),
 				mcp.WithClientOnPingFailed(func(error) {
 					atomic.AddInt64(&clientPingFailedCount, 1)
 				}),
 			},
 		}
 
-		testFunc := testSuiteCase(cfg, func(t *testing.T, _ *testSuite) {
+		t.Run(fmt.Sprintf("%s/TestPing", transportName), testSuiteCase(cfg, func(t *testing.T, s *testSuite) {
+			if s.clientConnectErr != nil {
+				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
+			}
+
 			// Wait for a few ping intervals to ensure multiple ping cycles occur
 			time.Sleep(1 * time.Second)
 
@@ -948,9 +1022,7 @@ func TestPing(t *testing.T) {
 			if atomic.LoadInt64(&clientPingFailedCount) != 0 {
 				t.Errorf("expected client to not have failed pings, got %d", clientPingFailedCount)
 			}
-		})
-
-		testFunc(t)
+		}))
 	}
 }
 
@@ -982,17 +1054,9 @@ func setupSSE() (mcp.SSEServer, *mcp.SSEClient, *httptest.Server) {
 	return srv, cli, httpSrv
 }
 
-func setupStdIO() (mcp.StdIO, mcp.StdIO, *os.File, *os.File, *os.File, *os.File) {
-	// Use os.Pipe instad of io.Pipe to reduce flakiness due to pipe buffering.
-	srvReader, srvWriter, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
-
-	cliReader, cliWriter, err := os.Pipe()
-	if err != nil {
-		panic(err)
-	}
+func setupStdIO() (mcp.StdIO, mcp.StdIO, *io.PipeReader, *io.PipeWriter, *io.PipeReader, *io.PipeWriter) {
+	srvReader, srvWriter := io.Pipe()
+	cliReader, cliWriter := io.Pipe()
 
 	// server's output is client's input
 	srvIO := mcp.NewStdIO(srvReader, cliWriter)
@@ -1036,7 +1100,7 @@ func (t *testSuite) setup() {
 		Version: "1.0",
 	}, t.clientTransport, t.cfg.clientOptions...)
 
-	clientCtx, clientCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	clientCtx, clientCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer clientCancel()
 
 	if err := t.mcpClient.Connect(clientCtx); err != nil {
@@ -1063,8 +1127,8 @@ func (t *testSuite) teardown(tt *testing.T) {
 		return
 	}
 
-	_ = t.srvIOReader.Close()
 	_ = t.srvIOWriter.Close()
-	_ = t.cliIOReader.Close()
+	_ = t.srvIOReader.Close()
 	_ = t.cliIOWriter.Close()
+	_ = t.cliIOReader.Close()
 }

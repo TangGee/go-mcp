@@ -35,8 +35,15 @@ type stdIOSession struct {
 	writer io.Writer
 	logger *slog.Logger
 
-	done   chan struct{}
-	closed chan struct{}
+	writeMessages chan stdIOMessage
+	done          chan struct{}
+	readClosed    chan struct{}
+	writeClosed   chan struct{}
+}
+
+type stdIOMessage struct {
+	msg  []byte
+	errs chan error
 }
 
 // NewStdIO creates a new StdIO instance configured with the provided reader and writer.
@@ -45,11 +52,13 @@ type stdIOSession struct {
 func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 	return StdIO{
 		sess: stdIOSession{
-			reader: reader,
-			writer: writer,
-			logger: slog.Default(),
-			done:   make(chan struct{}),
-			closed: make(chan struct{}),
+			reader:        reader,
+			writer:        writer,
+			logger:        slog.Default(),
+			writeMessages: make(chan stdIOMessage),
+			done:          make(chan struct{}),
+			readClosed:    make(chan struct{}),
+			writeClosed:   make(chan struct{}),
 		},
 		closed: make(chan struct{}),
 	}
@@ -61,6 +70,8 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 func (s StdIO) Sessions() iter.Seq[Session] {
 	return func(yield func(Session) bool) {
 		defer close(s.closed)
+
+		go s.sess.processWriteMessages()
 
 		// StdIO only supports a single session, so we yield it and wait until it's done.
 		yield(s.sess)
@@ -83,6 +94,7 @@ func (s StdIO) Shutdown(ctx context.Context) error {
 // and returning an iterator for receiving server messages. The ready channel is closed
 // immediately to indicate session establishment.
 func (s StdIO) StartSession(_ context.Context) (Session, error) {
+	go s.sess.processWriteMessages()
 	return s.sess, nil
 }
 
@@ -98,43 +110,41 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	// Append newline to maintain message framing protocol
 	msgBs = append(msgBs, '\n')
 
-	errs := make(chan error)
+	ioMsg := stdIOMessage{
+		msg:  msgBs,
+		errs: make(chan error, 1),
+	}
 
-	// Spawn a goroutine for writing to prevent blocking on slow writers
-	// while still respecting context cancellation or done channel.
-	go func() {
-		_, err = s.writer.Write(msgBs)
-		if err != nil {
-			select {
-			case errs <- fmt.Errorf("failed to write message: %w", err):
-			default:
-			}
-			return
-		}
-		select {
-		case errs <- nil:
-		default:
-		}
-	}()
-
+	// Queue the message for sending to avoid race in the StdIO library.
 	select {
-	case err := <-errs:
+	case <-ctx.Done():
+		s.logger.Error("failed to feed writeMessages channel", slog.String("err", ctx.Err().Error()))
+		return ctx.Err()
+	case <-s.done:
+		s.logger.Warn("session is closed while feeding writeMessages channel", slog.String("message", string(msgBs)))
+		return nil
+	case s.writeMessages <- ioMsg:
+	}
+
+	// Wait for the resulting error channel to receive the error.
+	select {
+	case err := <-ioMsg.errs:
 		if err != nil {
-			s.logger.Error("failed to send message", slog.String("err", err.Error()))
+			s.logger.Error("get error result from write", slog.String("err", err.Error()))
 		}
 		return err
 	case <-ctx.Done():
-		s.logger.Error("failed to send message", slog.String("err", ctx.Err().Error()))
+		s.logger.Error("failed to wait for write result", slog.String("err", ctx.Err().Error()))
 		return ctx.Err()
 	case <-s.done:
-		s.logger.Warn("session is closed while sending message", slog.String("message", string(msgBs)))
+		s.logger.Warn("session is closed while waiting for write result", slog.String("message", string(msgBs)))
 		return nil
 	}
 }
 
 func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 	return func(yield func(JSONRPCMessage) bool) {
-		defer close(s.closed)
+		defer close(s.readClosed)
 
 		// Use bufio.Reader instead of bufio.Scanner to avoid max token size errors.
 		reader := bufio.NewReader(s.reader)
@@ -198,5 +208,24 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 
 func (s stdIOSession) Stop() {
 	close(s.done)
-	<-s.closed
+	<-s.readClosed
+	<-s.writeClosed
+}
+
+func (s stdIOSession) processWriteMessages() {
+	defer close(s.writeClosed)
+
+	for {
+		// Process writing the message queue until the session is closed.
+		var msg stdIOMessage
+		select {
+		case <-s.done:
+			return
+		case msg = <-s.writeMessages:
+		}
+
+		_, err := s.writer.Write(msg.msg)
+
+		msg.errs <- err
+	}
 }

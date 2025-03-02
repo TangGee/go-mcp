@@ -91,7 +91,7 @@ func NewSSEServer(messageURL string) SSEServer {
 		logger:           slog.Default(),
 		sessions:         make(chan sseServerSession, 5),
 		removedSessions:  make(chan string),
-		receivedMessages: make(chan sseSessionMessage),
+		receivedMessages: make(chan sseSessionMessage, 100),
 		done:             make(chan struct{}),
 		closed:           make(chan struct{}),
 	}
@@ -236,8 +236,8 @@ func (s SSEServer) HandleSSE() http.Handler {
 			id:             sessID,
 			sess:           sess,
 			logger:         s.logger,
-			sendMsgs:       make(chan sseServerSessionSendMsg, 5),
-			receivedMsgs:   make(chan JSONRPCMessage, 5),
+			sendMsgs:       make(chan sseServerSessionSendMsg),
+			receivedMsgs:   make(chan JSONRPCMessage),
 			done:           make(chan struct{}),
 			sendClosed:     make(chan struct{}),
 			receivedClosed: make(chan struct{}),
@@ -286,6 +286,10 @@ func (s SSEServer) HandleMessage() http.Handler {
 		// Feed the receivedMessages channel so the Sessions loop can route it to the correct session.
 		select {
 		case <-s.done:
+			return
+		case <-r.Context().Done():
+			http.Error(w, "context is cancelled", http.StatusBadRequest)
+			s.logger.Warn("context is cancelled while handling message", slog.Any("message", msg))
 			return
 		case s.receivedMessages <- sseSessionMessage{sessID: sessID, msg: msg}:
 		}
@@ -405,7 +409,10 @@ func (s *SSEClient) Stop() {
 }
 
 func (s *SSEClient) listenSSEMessages(body io.ReadCloser, initErrs chan<- error) {
-	defer close(s.messages)
+	defer func() {
+		body.Close()
+		close(s.messages)
+	}()
 
 	// The default value defined in the sse library is 65 KB, set this config if user set a custom value.
 	var config *sse.ReadConfig

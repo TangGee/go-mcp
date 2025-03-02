@@ -312,7 +312,7 @@ func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOpt
 // Serve blocks until the provided context is cancelled, at which point it performs
 // a graceful shutdown by closing all active sessions and cleaning up resources.
 func (s Server) Serve() {
-	broadcasts := make(chan JSONRPCMessage)
+	broadcasts := make(chan JSONRPCMessage, 10)
 
 	if s.promptListUpdater != nil {
 		go s.listenUpdates(methodNotificationsPromptsListChanged, s.promptListUpdater.PromptListUpdates(),
@@ -400,8 +400,8 @@ func (s Server) Shutdown(ctx context.Context) error {
 
 func (s Server) start(broadcasts <-chan JSONRPCMessage) {
 	// These channles are used to send broadcasts to all sessions in the goroutine below.
-	sessions := make(chan serverSession)
-	removedSessions := make(chan string)
+	sessions := make(chan serverSession, 5)
+	removedSessions := make(chan string, 5)
 
 	go s.broadcast(broadcasts, sessions, removedSessions)
 
@@ -578,28 +578,26 @@ func (s serverSession) start(done <-chan struct{}) {
 			)
 			continue
 		}
-
 		switch msg.Method {
 		case methodPing:
-			pongCtx, pongCancel := context.WithTimeout(context.Background(), s.pingTimeout)
-			// Send pong back to the client
-			if err := s.session.Send(pongCtx, JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				ID:      msg.ID,
-			}); err != nil {
-				s.logger.Error("failed to send pong", slog.String("err", err.Error()))
-			}
-			pongCancel()
+			go func(msgID MustString) {
+				// Send pong back to the client
+				pongCtx, pongCancel := context.WithTimeout(context.Background(), s.pingTimeout)
+				if err := s.session.Send(pongCtx, JSONRPCMessage{
+					JSONRPC: JSONRPCVersion,
+					ID:      msgID,
+				}); err != nil {
+					s.logger.Error("failed to send pong", slog.String("err", err.Error()))
+				}
+				pongCancel()
+			}(msg.ID)
 		case methodInitialize:
-			// If the initialization request is invalid, we cannot call session.Stop() here,
-			// because it would make calling that function twice. Which in turn would cause
-			// the "closing of closed channel" panic in the transport implementation.
-			s.handleInitializeRequest(msg)
+			// Handle initialization request.
+			go s.handleInitializeRequest(msg)
 		case MethodPromptsList, MethodPromptsGet, MethodResourcesList, MethodResourcesRead, MethodResourcesTemplatesList,
 			MethodResourcesSubscribe, MethodResourcesUnsubscribe, MethodToolsList, MethodToolsCall,
 			MethodCompletionComplete, MethodLoggingSetLevel:
 			if !initialized {
-				// Ignore messages until the session is initialized
 				continue
 			}
 			// All the method above required us to call the server implementation, and all the call is cancellable,
@@ -617,7 +615,6 @@ func (s serverSession) start(done <-chan struct{}) {
 			initialized = true
 		case methodNotificationsCancelled:
 			if !initialized {
-				// Ignore messages until the session is initialized
 				continue
 			}
 			// Lookup the context cancellation for message ID
@@ -627,23 +624,28 @@ func (s serverSession) start(done <-chan struct{}) {
 			}
 		case methodNotificationsRootsListChanged:
 			if !initialized {
-				// Ignore messages until the session is initialized
 				continue
 			}
 			if s.rootsListWatcher != nil {
 				s.rootsListWatcher.OnRootsListChanged()
 			}
 		case "":
-			// This is the response from the client, either from ping request or
-			// clientRequester that called by the server implementation
+			// This is the response from the client, it can be from initialization error, ping request or
+			// clientRequester that called by the server implementation.
 
+			// Check if this is an error response to our initialization request
+			if !initialized && msg.Error != nil {
+				// If we receive an error during initialization, log it and go on.
+				s.logger.Error("initialization failed with error from client",
+					slog.String("err", msg.Error.Error()))
+				break
+			}
 			// Feed the ping gourotine with the message ID we received from the client.
 			select {
 			case <-done:
 				break
 			case pingMessageIDs <- msg.ID:
 			}
-
 			// If it is indeed a ping response, it would not stored on the map.
 			// And as the other rseponse with invalid message ID, we ingore it.
 			results, rOk := requestResults[msg.ID]
@@ -660,7 +662,6 @@ func (s serverSession) start(done <-chan struct{}) {
 			delete(requestResults, msg.ID)
 		}
 	}
-
 	// Cancel all the contexts that we created
 	baseCancel()
 	// Close the ping message ID channel
@@ -724,7 +725,7 @@ func (s serverSession) ping(messageIDs <-chan MustString, done <-chan struct{}) 
 				continue
 			}
 			// If it's the same, we received a ping response, reset the failed ping counter.
-			// s.logger.Info("received ping response, resetting failed ping counter")
+			s.logger.Info("received ping response, resetting failed ping counter")
 			failedPings = 0
 			continue
 		case <-pingTicker.C:

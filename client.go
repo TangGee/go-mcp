@@ -385,17 +385,19 @@ func (c *Client) start() {
 
 		switch msg.Method {
 		case methodPing:
-			// Send pong back to the server.
-			pongCtx, pongCancel := context.WithTimeout(context.Background(), c.pingTimeout)
-			if err := c.session.Send(pongCtx, JSONRPCMessage{
-				JSONRPC: JSONRPCVersion,
-				ID:      msg.ID,
-			}); err != nil {
-				c.logger.Error("failed to send pong", slog.String("err", err.Error()))
-			}
-			pongCancel()
+			go func(msgID MustString) {
+				// Send pong back to the server.
+				pongCtx, pongCancel := context.WithTimeout(context.Background(), c.pingTimeout)
+				if err := c.session.Send(pongCtx, JSONRPCMessage{
+					JSONRPC: JSONRPCVersion,
+					ID:      msgID,
+				}); err != nil {
+					c.logger.Error("failed to send pong", slog.String("err", err.Error()))
+				}
+				pongCancel()
+			}(msg.ID)
 		case MethodRootsList, MethodSamplingCreateMessage:
-			c.handleHandlerImplementationMessage(msg)
+			go c.handleHandlerImplementationMessage(msg)
 		case methodNotificationsPromptsListChanged:
 			if c.serverState.isInitialized() && c.promptListWatcher != nil {
 				c.promptListWatcher.OnPromptListChanged()
