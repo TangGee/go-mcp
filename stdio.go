@@ -16,7 +16,7 @@ import (
 
 // StdIO implements a standard input/output transport layer for MCP communication using
 // JSON-RPC message encoding over stdin/stdout or similar io.Reader/io.Writer pairs. It
-// provides a single persistent session identified as "1" and handles bidirectional message
+// provides a single persistent session with a UUID identifier and handles bidirectional message
 // passing through internal channels, processing messages sequentially.
 //
 // The transport layer maintains internal state through its embedded stdIOSession and can
@@ -91,8 +91,7 @@ func (s StdIO) Shutdown(ctx context.Context) error {
 }
 
 // StartSession implements the ClientTransport interface by initializing a new session
-// and returning an iterator for receiving server messages. The ready channel is closed
-// immediately to indicate session establishment.
+// and returning it. The session provides methods for communication with the server.
 func (s StdIO) StartSession(_ context.Context) (Session, error) {
 	go s.sess.processWriteMessages()
 	return s.sess, nil

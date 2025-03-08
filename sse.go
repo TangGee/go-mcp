@@ -24,7 +24,7 @@ import (
 // capabilities through its HandleSSE and HandleMessage http.Handlers. These handlers can
 // be integrated with any HTTP framework.
 //
-// Instances should be created using NewSSEServer and properly shut down using Close when
+// Instances should be created using NewSSEServer and properly shut down using Shutdown when
 // no longer needed.
 type SSEServer struct {
 	messageURL string
@@ -84,7 +84,7 @@ type sseServerSessionSendMsg struct {
 // NewSSEServer creates and initializes a new SSE server that listens for client connections
 // at the specified messageURL. The server is immediately operational upon creation with
 // initialized internal channels for session and message management. The returned SSEServer
-// must be closed using Close when no longer needed.
+// must be closed using Shutdown when no longer needed.
 func NewSSEServer(messageURL string) SSEServer {
 	return SSEServer{
 		messageURL:       messageURL,
@@ -399,7 +399,7 @@ func (s *SSEClient) Messages() iter.Seq[JSONRPCMessage] {
 	}
 }
 
-// Stop gracefully shuts down the SSE client by closing the sse body.
+// Stop gracefully shuts down the SSE client by closing the SSE connection.
 func (s *SSEClient) Stop() {
 	// Cancel the request context that made for starting the session to signal the shutdown.
 	s.requestCancel()

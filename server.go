@@ -173,98 +173,99 @@ func NewServer(info Info, transport ServerTransport, options ...ServerOption) Se
 	return s
 }
 
-// WithRequireRootsListClient sets the roots list client requirement for the server.
+// WithRequireRootsListClient returns a ServerOption that requires the client to support roots list capability.
 func WithRequireRootsListClient() ServerOption {
 	return func(s *Server) {
 		s.requireRootsListClient = true
 	}
 }
 
-// WithRequireSamplingClient sets the sampling client requirement for the server.
+// WithRequireSamplingClient returns a ServerOption that requires the client to support sampling capability.
 func WithRequireSamplingClient() ServerOption {
 	return func(s *Server) {
 		s.requireSamplingClient = true
 	}
 }
 
-// WithPromptServer sets the prompt server for the server.
+// WithPromptServer returns a ServerOption that configures the prompt server implementation.
 func WithPromptServer(srv PromptServer) ServerOption {
 	return func(s *Server) {
 		s.promptServer = srv
 	}
 }
 
-// WithPromptListUpdater sets the prompt list watcher for the server.
+// WithPromptListUpdater returns a ServerOption that configures the prompt list updater implementation.
 func WithPromptListUpdater(updater PromptListUpdater) ServerOption {
 	return func(s *Server) {
 		s.promptListUpdater = updater
 	}
 }
 
-// WithResourceServer sets the resource server for the server.
+// WithResourceServer returns a ServerOption that configures the resource server implementation.
 func WithResourceServer(srv ResourceServer) ServerOption {
 	return func(s *Server) {
 		s.resourceServer = srv
 	}
 }
 
-// WithResourceListUpdater sets the resource list watcher for the server.
+// WithResourceListUpdater returns a ServerOption that configures the resource list updater implementation.
 func WithResourceListUpdater(updater ResourceListUpdater) ServerOption {
 	return func(s *Server) {
 		s.resourceListUpdater = updater
 	}
 }
 
-// WithResourceSubscriptionHandler sets the resource subscription handler for the server.
+// WithResourceSubscriptionHandler returns a ServerOption that configures
+// the resource subscription handler implementation.
 func WithResourceSubscriptionHandler(handler ResourceSubscriptionHandler) ServerOption {
 	return func(s *Server) {
 		s.resourceSubscriptionHandler = handler
 	}
 }
 
-// WithToolServer sets the tool server for the server.
+// WithToolServer returns a ServerOption that configures the tool server implementation.
 func WithToolServer(srv ToolServer) ServerOption {
 	return func(s *Server) {
 		s.toolServer = srv
 	}
 }
 
-// WithToolListUpdater sets the tool list watcher for the server.
+// WithToolListUpdater returns a ServerOption that configures the tool list updater implementation.
 func WithToolListUpdater(updater ToolListUpdater) ServerOption {
 	return func(s *Server) {
 		s.toolListUpdater = updater
 	}
 }
 
-// WithRootsListWatcher sets the roots list watcher for the server.
+// WithRootsListWatcher returns a ServerOption that configures the roots list watcher implementation.
 func WithRootsListWatcher(watcher RootsListWatcher) ServerOption {
 	return func(s *Server) {
 		s.rootsListWatcher = watcher
 	}
 }
 
-// WithLogHandler sets the log handler for the server.
+// WithLogHandler returns a ServerOption that configures the log handler implementation.
 func WithLogHandler(handler LogHandler) ServerOption {
 	return func(s *Server) {
 		s.logHandler = handler
 	}
 }
 
-// WithInstructions sets the instructions for the server.
+// WithInstructions returns a ServerOption that configures the server instructions.
 func WithInstructions(instructions string) ServerOption {
 	return func(s *Server) {
 		s.instructions = instructions
 	}
 }
 
-// WithServerPingInterval sets the ping interval for the server.
+// WithServerPingInterval returns a ServerOption that configures the server's ping interval.
 func WithServerPingInterval(interval time.Duration) ServerOption {
 	return func(s *Server) {
 		s.pingInterval = interval
 	}
 }
 
-// WithServerPingTimeout sets the ping timeout for the server.
+// WithServerPingTimeout returns a ServerOption that configures the server's ping timeout.
 func WithServerPingTimeout(timeout time.Duration) ServerOption {
 	return func(s *Server) {
 		s.pingTimeout = timeout
@@ -279,7 +280,7 @@ func WithServerPingTimeoutThreshold(threshold int) ServerOption {
 	}
 }
 
-// WithServerSendTimeout sets the send timeout for the server.
+// WithServerSendTimeout returns a ServerOption that configures the server's send timeout.
 func WithServerSendTimeout(timeout time.Duration) ServerOption {
 	return func(s *Server) {
 		s.sendTimeout = timeout
@@ -302,15 +303,10 @@ func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOpt
 	}
 }
 
-// Serve starts a Model Context Protocol (MCP) server and manages its lifecycle. It handles
-// client connections, protocol messages, and server capabilities according to the MCP specification.
+// Serve starts the MCP server and manages its lifecycle. It handles client connections,
+// protocol messages, and server capabilities according to the MCP specification.
 //
-// The server parameter must implement the Server interface to define core MCP capabilities
-// like prompts, resources, and tools. The transport parameter specifies how the server
-// communicates with clients (e.g., HTTP or stdio).
-//
-// Serve blocks until the provided context is cancelled, at which point it performs
-// a graceful shutdown by closing all active sessions and cleaning up resources.
+// Serve blocks until the server is shut down.
 func (s Server) Serve() {
 	broadcasts := make(chan JSONRPCMessage, 10)
 
@@ -350,7 +346,8 @@ func (s Server) Serve() {
 	s.start(broadcasts)
 }
 
-// Shutdown gracefully shuts down the server by terminating all active client.
+// Shutdown gracefully shuts down the server by terminating all active clients and cleaning up resources.
+// It returns an error if the shutdown process fails or if the context is cancelled before the shutdown completes.
 func (s Server) Shutdown(ctx context.Context) error {
 	// Signal the server to shutdown and terminates all sessions
 	close(s.done)

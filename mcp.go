@@ -15,19 +15,18 @@ type ServerTransport interface {
 	// The implementation should exit the iteration when the Shutdown method is called.
 	Sessions() iter.Seq[Session]
 
-	// Shutdown gracefully shuts down the ServerTransport to clean up resources. The implementations should not
-	// close all the Session it produce, the caller would already do that when callling this method. The caller
-	// is guaranteed to call this method only once.
+	// Shutdown gracefully shuts down the ServerTransport and cleans up resources. The implementation
+	// should not close the Session objects it has produced, as the caller will handle this when
+	// invoking this method. The caller is guaranteed to call this method only once.
 	Shutdown(ctx context.Context) error
 }
 
 // ClientTransport provides the client-side communication layer in the MCP protocol.
 type ClientTransport interface {
-	// StartSession initiates a new session with the server and returns an iterator that yields server messages.
-	// The transport signals its readiness to send messages through the ready channel by either closing it or
-	// feeding an error. Operations are canceled when the context is canceled, and appropriate errors are returned
-	// for connection or protocol failures. Refer to the returned iterator's documentation for details on message
-	// handling.
+	// StartSession initiates a new session with the server and returns a Session object
+	// for bidirectional communication. Operations are canceled when the context is canceled,
+	// and appropriate errors are returned for connection or protocol failures. The returned
+	// Session provides methods to send messages and receive responses from the server.
 	StartSession(ctx context.Context) (Session, error)
 }
 
@@ -37,15 +36,16 @@ type Session interface {
 	// guarantee that session IDs are unique across all active sessions managed.
 	ID() string
 
-	// Send transmits a message to the client.
+	// Send transmits a message to the other party. Returns an error if the message
+	// cannot be sent or if the context is canceled.
 	Send(ctx context.Context, msg JSONRPCMessage) error
 
 	// Messages returns an iterator that yields messages received from the other party.
-	// The implementations should exit the iteration if the session is closed.
+	// The implementation should exit the iteration if the session is closed.
 	Messages() iter.Seq[JSONRPCMessage]
 
-	// Stop stops the session.
-	// The implementation should not called this, as the caller is guaranteed to call
+	// Stop terminates the session and cleans up associated resources.
+	// The implementation should not call this, as the caller is guaranteed to call
 	// this method once.
 	Stop()
 }
@@ -118,7 +118,7 @@ type ResourceServer interface {
 // The notifications are used by the MCP server to inform connected clients about resource list
 // changes. Clients can then refresh their cached resource lists by calling ListResources again.
 //
-// A struct{} is sent through the channel as only the notification matters, not the value.
+// A struct{} is sent through the iterator as only the notification matters, not the value.
 type ResourceListUpdater interface {
 	ResourceListUpdates() iter.Seq[struct{}]
 }
@@ -153,7 +153,7 @@ type ToolServer interface {
 // The notifications are used by the MCP server to inform connected clients about tool list
 // changes. Clients can then refresh their cached tool lists by calling ListTools again.
 //
-// A struct{} is sent through the channel as only the notification matters, not the value.
+// A struct{} is sent through the iterator as only the notification matters, not the value.
 type ToolListUpdater interface {
 	ToolListUpdates() iter.Seq[struct{}]
 }
@@ -187,8 +187,12 @@ type RootsListHandler interface {
 }
 
 // RootsListUpdater provides an interface for monitoring changes to the available roots list.
-// Implementations should maintain a channel that emits notifications whenever the list of
-// available roots changes, such as when roots are added, removed, or modified.
+//
+// The notifications are used by the MCP client to inform connected servers about roots list
+// changes. Servers can then update their internal state to reflect the client's current
+// root resources.
+//
+// A struct{} is sent through the iterator as only the notification matters, not the value.
 type RootsListUpdater interface {
 	// RootsListUpdates returns an iterator that emits notifications when the root list changes.
 	RootsListUpdates() iter.Seq[struct{}]
