@@ -5,35 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.6.0] - 2025-03-09
+
+This release focuses on significant architectural improvements, introducing the new `Server` struct with comprehensive ping management capabilities, enhanced connection lifecycle options, and a more responsive client connection model. The changes provide better resource management through dedicated session control methods and a new in-memory server implementation, while simplifying the timeout handling approach through context-based parameters.
 
 ### Added
 
-- Auto-close server session on ping timeout exceeds given threshold.
-- `Server` struct with the same option as `Serve`.
-- `WithServerPingTimeout` option for `Server` struct.
-- `WithServerPingTimeoutThreshold` option for `Server` struct.
-- `WithServerOnClientConnected` option for `Server` struct.
-- `WithServerOnClientDisconnected` option for `Server` struct.
-- `Disconnect` method for `Client` struct.
-- `Shutdown` method for `ServerTransport` interface.
-- `WithClientPingTimeout` option for `Client` struct.
-- `WithClientOnPingFailed` option for `Client` struct.
-- `Stop` method for `Session` interface.
-- `WithSSEClientMaxPayloadSize` option for SSE client to handle large payloads.
-- `memory` server implementation.
+- Add automatic server session closure when ping timeout threshold is exceeded.
+- Add `Server` struct that replaces the previous `Serve` function with equivalent functionality.
+- Add ping management options for server: `WithServerPingTimeout` and `WithServerPingTimeoutThreshold`.
+- Add server lifecycle callback options: `WithServerOnClientConnected` and `WithServerOnClientDisconnected`.
+- Add connection management methods: `Disconnect` for `Client` struct and `Shutdown` for `ServerTransport` interface.
+- Add ping management options for client: `WithClientPingTimeout` and `WithClientOnPingFailed`.
+- Add `Stop` method to `Session` interface for controlled session termination.
+- Add `WithSSEClientMaxPayloadSize` option to configure maximum payload size in SSE clients.
+- Add `memory` server implementation. 
 
 ### Changed
 
-- The `Connect` method in `Client` struct is no longer block forever, once the session is established and initialized, it will return immediately, and the `Client` struct would be able to be used properly.
-- The `StartSession` method in `ClientTransport` now returns a `Session` instead of an iterator.
+- Modify `Connect` method to return immediately after session establishment instead of blocking indefinitely.
+- Update `StartSession` method in `ClientTransport` to return a `Session` object instead of an iterator.
 
 ### Removed
 
-- `WithServerWriteTimeout` and `WithServerReadTimeout` options for `Server` struct.  
-- `WithClientWriteTimeout` and `WithClientReadTimeout` options for `Client` struct, user could provides the timeout on the `ctx` parameter.
-- `Serve` function, replaced by `Server` struct.
-- `Send` function in `ClientTransport` interface, it's handled by the `Session` interface.
+- Remove `WithServerWriteTimeout` and `WithServerReadTimeout` options as they are no longer necessary with the new timeout model.
+- Remove `WithClientWriteTimeout` and `WithClientReadTimeout` options in favor of using context timeout parameters.
+- Remove `Serve` function in favor of the more flexible `Server` struct implementation.
+- Remove `Send` function from `ClientTransport` interface as this functionality is now handled by the `Session` interface.
 
 ## [0.5.1] - 2025-02-17
 
