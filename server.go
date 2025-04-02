@@ -303,6 +303,13 @@ func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOpt
 	}
 }
 
+// WithServerLogger sets the logger for the server.
+func WithServerLogger(logger *slog.Logger) ServerOption {
+	return func(s *Server) {
+		s.logger = logger
+	}
+}
+
 // Serve starts the MCP server and manages its lifecycle. It handles client connections,
 // protocol messages, and server capabilities according to the MCP specification.
 //

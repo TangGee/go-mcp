@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+[Unrealeased]
+
+### Added
+
+- Add `WithClientLogger` and `WithServerLogger` options to configure the client and server loggers.
+
 ## [0.6.0] - 2025-03-09
 
 This release focuses on significant architectural improvements, introducing the new `Server` struct with comprehensive ping management capabilities, enhanced connection lifecycle options, and a more responsive client connection model. The changes provide better resource management through dedicated session control methods and a new in-memory server implementation, while simplifying the timeout handling approach through context-based parameters.

@@ -165,6 +165,13 @@ func WithClientOnPingFailed(onPingFailed func(error)) ClientOption {
 	}
 }
 
+// WithClientLogger sets the logger for the client.
+func WithClientLogger(logger *slog.Logger) ClientOption {
+	return func(c *Client) {
+		c.logger = logger
+	}
+}
+
 // NewClient creates a new Model Context Protocol (MCP) client with the specified configuration.
 // It establishes a client that can communicate with MCP servers according to the protocol
 // specification at https://spec.modelcontextprotocol.io/specification/.
