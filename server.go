@@ -306,7 +306,10 @@ func WithServerOnClientDisconnected(onClientDisconnected func(string)) ServerOpt
 // WithServerLogger sets the logger for the server.
 func WithServerLogger(logger *slog.Logger) ServerOption {
 	return func(s *Server) {
-		s.logger = logger
+		s.logger = logger.With(
+			slog.String("package", "go-mcp"),
+			slog.String("component", "server"),
+		)
 	}
 }
 

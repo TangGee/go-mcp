@@ -168,7 +168,10 @@ func WithClientOnPingFailed(onPingFailed func(error)) ClientOption {
 // WithClientLogger sets the logger for the client.
 func WithClientLogger(logger *slog.Logger) ClientOption {
 	return func(c *Client) {
-		c.logger = logger
+		c.logger = logger.With(
+			slog.String("package", "go-mcp"),
+			slog.String("component", "client"),
+		)
 	}
 }
 

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add `WithClientLogger` and `WithServerLogger` options to configure the client and server loggers.
+- Add `WithStdIOLogger` option to configure the StdIO logger.
+- Add `WithSSEClientLogger` and `WithSSEServerLogger` options to configure the SSE client and server loggers.
 
 ## [0.6.0] - 2025-03-09
 

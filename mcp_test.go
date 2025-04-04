@@ -476,7 +476,7 @@ func TestPrompt(t *testing.T) {
 				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
 			}
 
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				promptListUpdater.ch <- struct{}{}
 			}
 
@@ -719,7 +719,7 @@ func TestResource(t *testing.T) {
 				t.Errorf("expected URI test://resource, got %s", resourceSubscriptionHandler.subscribeParams.URI)
 			}
 
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				resourceSubscriptionHandler.ch <- "test://resource"
 			}
 
@@ -763,7 +763,7 @@ func TestResource(t *testing.T) {
 				t.Fatalf("failed to connect to server: %v", s.clientConnectErr)
 			}
 
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				resourceListUpdater.ch <- struct{}{}
 			}
 
@@ -911,7 +911,7 @@ func TestRoot(t *testing.T) {
 
 			defer close(rootsListUpdater.done)
 
-			for i := 0; i < 5; i++ {
+			for range 5 {
 				rootsListUpdater.ch <- struct{}{}
 			}
 
@@ -952,7 +952,7 @@ func TestLog(t *testing.T) {
 			}
 
 			handler.level = mcp.LogLevelDebug
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				handler.params <- mcp.LogParams{}
 			}
 

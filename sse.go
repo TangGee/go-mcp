@@ -38,6 +38,9 @@ type SSEServer struct {
 	closed chan struct{}
 }
 
+// SSEServerOption represents the options for the SSEServer.
+type SSEServerOption func(*SSEServer)
+
 // SSEClient implements a Server-Sent Events (SSE) client that manages server connections
 // and bidirectional message handling. It provides real-time communication through SSE for
 // server-to-client streaming and HTTP POST for client-to-server messages.
@@ -85,8 +88,8 @@ type sseServerSessionSendMsg struct {
 // at the specified messageURL. The server is immediately operational upon creation with
 // initialized internal channels for session and message management. The returned SSEServer
 // must be closed using Shutdown when no longer needed.
-func NewSSEServer(messageURL string) SSEServer {
-	return SSEServer{
+func NewSSEServer(messageURL string, options ...SSEServerOption) SSEServer {
+	s := SSEServer{
 		messageURL:       messageURL,
 		logger:           slog.Default(),
 		sessions:         make(chan sseServerSession, 5),
@@ -94,6 +97,22 @@ func NewSSEServer(messageURL string) SSEServer {
 		receivedMessages: make(chan sseSessionMessage, 100),
 		done:             make(chan struct{}),
 		closed:           make(chan struct{}),
+	}
+
+	for _, opt := range options {
+		opt(&s)
+	}
+
+	return s
+}
+
+// WithSSEServerLogger sets the logger for the SSEServer.
+func WithSSEServerLogger(logger *slog.Logger) SSEServerOption {
+	return func(s *SSEServer) {
+		s.logger = logger.With(
+			slog.String("package", "go-mcp"),
+			slog.String("component", "sse-server"),
+		)
 	}
 }
 
@@ -126,6 +145,16 @@ func NewSSEClient(connectURL string, httpClient *http.Client, options ...SSEClie
 func WithSSEClientMaxPayloadSize(size int) SSEClientOption {
 	return func(s *SSEClient) {
 		s.maxPayloadSize = size
+	}
+}
+
+// WithSSEClientLogger sets the logger for the SSEClient.
+func WithSSEClientLogger(logger *slog.Logger) SSEClientOption {
+	return func(s *SSEClient) {
+		s.logger = logger.With(
+			slog.String("package", "go-mcp"),
+			slog.String("component", "sse-client"),
+		)
 	}
 }
 

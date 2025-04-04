@@ -181,7 +181,7 @@ func TestSSEServerMultipleClients(t *testing.T) {
 	}()
 
 	// Create multiple concurrent clients to stress test session management
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			client := mcp.NewSSEClient(testServer.URL+"/connect", testServer.Client())
 
@@ -476,7 +476,7 @@ func TestSSEBidirectionalMessageFlow(t *testing.T) {
 	}
 
 	// Collect received messages
-	for i := 0; i < len(testMessages); i++ {
+	for i := range testMessages {
 		select {
 		case msg := <-clientMsgChan:
 			clientReceivedMsgs = append(clientReceivedMsgs, msg)

@@ -30,6 +30,9 @@ type StdIO struct {
 	closed chan struct{}
 }
 
+// StdIOOption represents the options for the StdIO.
+type StdIOOption func(*StdIO)
+
 type stdIOSession struct {
 	reader io.Reader
 	writer io.Writer
@@ -49,8 +52,8 @@ type stdIOMessage struct {
 // NewStdIO creates a new StdIO instance configured with the provided reader and writer.
 // The instance is initialized with default logging and required internal communication
 // channels.
-func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
-	return StdIO{
+func NewStdIO(reader io.Reader, writer io.Writer, options ...StdIOOption) StdIO {
+	s := StdIO{
 		sess: stdIOSession{
 			reader:        reader,
 			writer:        writer,
@@ -61,6 +64,21 @@ func NewStdIO(reader io.Reader, writer io.Writer) StdIO {
 			writeClosed:   make(chan struct{}),
 		},
 		closed: make(chan struct{}),
+	}
+
+	for _, opt := range options {
+		opt(&s)
+	}
+
+	return s
+}
+
+func WithStdIOLogger(logger *slog.Logger) StdIOOption {
+	return func(s *StdIO) {
+		s.sess.logger = logger.With(
+			slog.String("package", "go-mcp"),
+			slog.String("component", "stdio"),
+		)
 	}
 }
 
@@ -108,6 +126,8 @@ func (s stdIOSession) Send(ctx context.Context, msg JSONRPCMessage) error {
 	}
 	// Append newline to maintain message framing protocol
 	msgBs = append(msgBs, '\n')
+
+	s.logger.Info("sending message", slog.String("msg", string(msgBs)))
 
 	ioMsg := stdIOMessage{
 		msg:  msgBs,
@@ -166,6 +186,7 @@ func (s stdIOSession) Messages() iter.Seq[JSONRPCMessage] {
 					}
 					return
 				}
+				s.logger.Info("received message", slog.String("msg", line))
 				select {
 				case lines <- lineWithErr{line: strings.TrimSuffix(line, "\n")}:
 				default:
@@ -222,6 +243,8 @@ func (s stdIOSession) processWriteMessages() {
 			return
 		case msg = <-s.writeMessages:
 		}
+
+		s.logger.Info("writing message", slog.String("msg", string(msg.msg)))
 
 		_, err := s.writer.Write(msg.msg)
 
