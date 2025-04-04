@@ -73,6 +73,7 @@ func NewStdIO(reader io.Reader, writer io.Writer, options ...StdIOOption) StdIO 
 	return s
 }
 
+// WithStdIOLogger sets the logger for the StdIO session.
 func WithStdIOLogger(logger *slog.Logger) StdIOOption {
 	return func(s *StdIO) {
 		s.sess.logger = logger.With(
