@@ -28,6 +28,7 @@ import (
 // no longer needed.
 type SSEServer struct {
 	messageURL string
+	scheme     string
 	logger     *slog.Logger
 
 	sessions         chan sseServerSession
@@ -113,6 +114,14 @@ func WithSSEServerLogger(logger *slog.Logger) SSEServerOption {
 			slog.String("package", "go-mcp"),
 			slog.String("component", "sse-server"),
 		)
+	}
+}
+
+// WithScheme sets the scheme (http or https) for the SSE server. This is used to
+// construct the message URL for clients. If not set, the default scheme is "http".
+func WithScheme(scheme string) SSEServerOption {
+	return func(s *SSEServer) {
+		s.scheme = scheme
 	}
 }
 
@@ -238,6 +247,25 @@ func (s SSEServer) HandleSSE() http.Handler {
 		}
 
 		sessID := uuid.New().String()
+
+		// Check if s.messageUrl is a relative URL, if so, we need to convert it to an absolute URL.
+		u, err := url.Parse(s.messageURL)
+		if err != nil {
+			nErr := fmt.Errorf("failed to parse message URL: %w", err)
+			s.logger.Error("failed to parse message URL", "err", nErr)
+			http.Error(w, nErr.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if !u.IsAbs() {
+			u.Host = r.Host
+			if s.scheme != "" {
+				u.Scheme = s.scheme
+			} else {
+				u.Scheme = "http"
+			}
+			s.messageURL = u.String()
+		}
 
 		// Form an url for the client that can be used to communicate with the server session.
 		url := fmt.Sprintf("%s?sessionID=%s", s.messageURL, sessID)
