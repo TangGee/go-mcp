@@ -5,19 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unrealeased]
+## [0.6.1] - 2025-04-09
+
+This update introduces comprehensive logging configuration options for all components (client, server, StdIO, and SSE) and improves URL handling in the SSE server by automatically converting relative URLs to absolute URLs, enhancing reliability in various deployment scenarios.
 
 ### Added
 
-- Add `WithClientLogger` and `WithServerLogger` options to configure the client and server loggers.
-- Add `WithStdIOLogger` option to configure the StdIO logger.
-- Add `WithSSEClientLogger` and `WithSSEServerLogger` options to configure the SSE client and server loggers.
-- Add `WithSSEScheme` option to configure the SSE server scheme to construct the message URL. Thanks @mikaelmorvan.
+- Add `WithClientLogger` and `WithServerLogger` options for customized client and server logging configuration.
+- Add `WithStdIOLogger` option for `StdIO` logging configuration.
+- Add `WithSSEClientLogger` and `WithSSEServerLogger` options for `SSEClient` and `SSEServer` logging configuration.
+- Add `WithSSEScheme` option to specify protocol (HTTP/HTTPS) for `SSEServer` message URL construction. Thanks @mikaelmorvan.
 
 ### Changed
 
-- Modify `SSEServer` to construct the `messageURL` as absolute URL, even when the `messageURL` parameter given in the
-`NewSSEServer` function is a relative URL. Thanks @mikaelmorvan.
+- Enhance `SSEServer` to automatically convert relative message URLs to absolute URLs, improving compatibility across different environments. Thanks @mikaelmorvan.
 
 ## [0.6.0] - 2025-03-09
 
