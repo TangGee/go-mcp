@@ -118,7 +118,7 @@ func WithSSEServerLogger(logger *slog.Logger) SSEServerOption {
 	}
 }
 
-// WithScheme sets the scheme (http or https) for the SSE server. This is used to
+// WithSSEScheme sets the scheme (http or https) for the SSE server. This is used to
 // construct the message URL for clients. If not set, the default scheme is "http".
 func WithSSEScheme(scheme string) SSEServerOption {
 	return func(s *SSEServer) {
