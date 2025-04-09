@@ -92,6 +92,7 @@ type sseServerSessionSendMsg struct {
 func NewSSEServer(messageURL string, options ...SSEServerOption) SSEServer {
 	s := SSEServer{
 		messageURL:       messageURL,
+		scheme:           "http",
 		logger:           slog.Default(),
 		sessions:         make(chan sseServerSession, 5),
 		removedSessions:  make(chan string),
@@ -119,7 +120,7 @@ func WithSSEServerLogger(logger *slog.Logger) SSEServerOption {
 
 // WithScheme sets the scheme (http or https) for the SSE server. This is used to
 // construct the message URL for clients. If not set, the default scheme is "http".
-func WithScheme(scheme string) SSEServerOption {
+func WithSSEScheme(scheme string) SSEServerOption {
 	return func(s *SSEServer) {
 		s.scheme = scheme
 	}
@@ -259,11 +260,7 @@ func (s SSEServer) HandleSSE() http.Handler {
 
 		if !u.IsAbs() {
 			u.Host = r.Host
-			if s.scheme != "" {
-				u.Scheme = s.scheme
-			} else {
-				u.Scheme = "http"
-			}
+			u.Scheme = s.scheme
 			s.messageURL = u.String()
 		}
 
