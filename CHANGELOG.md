@@ -5,13 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-[Unrealeased]
+## [Unrealeased]
 
 ### Added
 
 - Add `WithClientLogger` and `WithServerLogger` options to configure the client and server loggers.
 - Add `WithStdIOLogger` option to configure the StdIO logger.
 - Add `WithSSEClientLogger` and `WithSSEServerLogger` options to configure the SSE client and server loggers.
+- Add `WithSSEScheme` option to configure the SSE server scheme to construct the message URL. Thanks @mikaelmorvan.
+
+### Changed
+
+- Modify `SSEServer` to construct the `messageURL` as absolute URL, even when the `messageURL` parameter given in the
+`NewSSEServer` function is a relative URL. Thanks @mikaelmorvan.
 
 ## [0.6.0] - 2025-03-09
 
