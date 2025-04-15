@@ -383,7 +383,7 @@ func (s *SSEClient) StartSession(ctx context.Context) (Session, error) {
 		return nil, fmt.Errorf("failed to connect to SSE server: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		resp.Body.Close()
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
@@ -433,7 +433,7 @@ func (s *SSEClient) Send(ctx context.Context, msg JSONRPCMessage) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 

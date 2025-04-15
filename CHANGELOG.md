@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Change `SSEClient` to accept both `http.StatusOK` (200) and `http.StatusAccepted` (202) as valid HTTP response codes from the server.
+
 ### Fixed
 
 - Fix `SSEClient` to properly handle relative message URLs that given by the server.
