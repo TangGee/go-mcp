@@ -499,6 +499,19 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, initErrs chan<- error)
 				initErrs <- errors.New("empty endpoint URL")
 				return
 			}
+
+			// If the URL is not absolute, resolve it against the connect URL
+			if !u.IsAbs() {
+				// Parse the connect URL to use as a base for resolving relative URL
+				baseURL, err := url.Parse(s.connectURL)
+				if err != nil {
+					initErrs <- fmt.Errorf("parse connect URL: %w", err)
+					close(initErrs)
+					return
+				}
+				u = baseURL.ResolveReference(u)
+			}
+
 			s.messageURL = u.String()
 			close(initErrs)
 		case "message":
