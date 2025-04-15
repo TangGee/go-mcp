@@ -506,7 +506,6 @@ func (s *SSEClient) listenSSEMessages(body io.ReadCloser, initErrs chan<- error)
 				baseURL, err := url.Parse(s.connectURL)
 				if err != nil {
 					initErrs <- fmt.Errorf("parse connect URL: %w", err)
-					close(initErrs)
 					return
 				}
 				u = baseURL.ResolveReference(u)
