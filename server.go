@@ -732,7 +732,7 @@ func (s serverSession) ping(messageIDs <-chan MustString, done <-chan struct{}) 
 				continue
 			}
 			// If it's the same, we received a ping response, reset the failed ping counter.
-			s.logger.Info("received ping response, resetting failed ping counter")
+			s.logger.Debug("received ping response, resetting failed ping counter")
 			failedPings = 0
 			continue
 		case <-pingTicker.C:
