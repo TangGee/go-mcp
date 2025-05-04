@@ -5,15 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.2] - 2025-05-05
+
+This update improves the SSE client implementation by expanding accepted HTTP response codes and fixing URL handling, resulting in better compatibility with various server configurations and more reliable message processing for server-sent events.
 
 ### Changed
 
-- Change `SSEClient` to accept both `http.StatusOK` (200) and `http.StatusAccepted` (202) as valid HTTP response codes from the server.
+- Enhance `SSEClient` to accept both HTTP status codes 200 (OK) and 202 (Accepted) as valid server responses, improving compatibility with different server implementations.
 
 ### Fixed
 
-- Fix `SSEClient` to properly handle relative message URLs that given by the server.
+- Correct `SSEClient` URL handling to properly process relative message URLs provided by the server, ensuring proper resource resolution.
 
 ## [0.6.1] - 2025-04-09
 
