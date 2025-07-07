@@ -58,6 +58,7 @@ type SSEClient struct {
 
 	messages chan JSONRPCMessage
 	closed   chan struct{}
+	authToken string
 }
 
 // SSEClientOption represents the options for the SSEClient.
@@ -167,6 +168,13 @@ func WithSSEClientLogger(logger *slog.Logger) SSEClientOption {
 		)
 	}
 }
+
+func WIthSSEClientAuthToken(authToken string) SSEClientOption {
+	return func(s *SSEClient) {
+		s.authToken = authToken
+	}
+}
+
 
 // Sessions returns an iterator over active client sessions. The iterator yields new
 // Session instances as clients connect to the server. Use this method to access and
@@ -377,7 +385,9 @@ func (s *SSEClient) StartSession(ctx context.Context) (Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-
+	if s.authToken != "" {
+		req.Header.Set("Authorization", "Bearer " + s.authToken)
+	}
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SSE server: %w", err)
@@ -424,6 +434,10 @@ func (s *SSEClient) Send(ctx context.Context, msg JSONRPCMessage) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.messageURL, r)
 	if err != nil {
 		return err
+	}
+
+	if s.authToken != "" {
+		req.Header.Set("Authorization", "Bearer " + s.authToken)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -631,3 +645,4 @@ func (s sseServerSession) processSendMessages() {
 		}
 	}
 }
+
