@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 func TestMustString_UnmarshalJSON(t *testing.T) {

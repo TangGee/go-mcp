@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"iter"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 // LogStreams implements mcp.LogHandler interface.

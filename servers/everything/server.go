@@ -3,7 +3,7 @@ package everything
 import (
 	"sync"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 // Server implements a comprehensive test server that exercises all features of the MCP protocol.

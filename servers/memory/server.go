@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 // Server implements the Model Context Protocol (MCP) for memory operations. It provides

@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
-	"github.com/MegaGrindStone/go-mcp/servers/filesystem"
+	"github.com/TangGee/go-mcp"
+	"github.com/TangGee/go-mcp/servers/filesystem"
 )
 
 type client struct {

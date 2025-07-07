@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 func TestSSEServerAndClient(t *testing.T) {

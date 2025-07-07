@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 func TestStdIOBidirectionalMessageFlow(t *testing.T) {

@@ -1,6 +1,6 @@
 package memory
 
-import "github.com/MegaGrindStone/go-mcp"
+import "github.com/TangGee/go-mcp"
 
 var toolList = mcp.ListToolsResult{
 	Tools: []mcp.Tool{

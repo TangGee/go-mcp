@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 const pageSize = 10

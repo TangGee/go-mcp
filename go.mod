@@ -1,4 +1,4 @@
-module github.com/MegaGrindStone/go-mcp
+module github.com/TangGee/go-mcp
 
 go 1.23.3
 

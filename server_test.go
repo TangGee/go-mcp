@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 type mockPromptServer struct {

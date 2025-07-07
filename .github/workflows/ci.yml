@@ -29,7 +29,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          slug: MegaGrindStone/go-mcp
+          slug: TangGee/go-mcp
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v3

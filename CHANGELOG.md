@@ -164,7 +164,7 @@ This release introduces significant improvements in API consistency and moderniz
 - Use structured parameter types (such as `ListPromptsParams` or `GetPromptParams`) in `Client` method signatures when making server requests, rather than using individual parameters. For example, instead of passing separate `cursor` and `progressToken` parameters to `ListPrompts`, or `name` and `arguments` to `GetPrompt`, use a dedicated parameter struct.
 - Utilize `go-sse` to handle `SSEClient` by @tmaxmax.
 - Utilize `go-sse`'s `Session` to sent the event messages from `SSEServer`.
-- Moved `mcp` package from `pkg/mcp` to root folder and `pkg/servers` package to `servers` package to simplify import paths. The `pkg` directory added unnecessary nesting and noise in import paths (e.g., from `github.com/MegaGrindStone/go-mcp/pkg/mcp` to `github.com/MegaGrindStone/go-mcp`, and from `github.com/MegaGrindStone/go-mcp/pkg/servers` to `github.com/MegaGrindStone/go-mcp/servers`).
+- Moved `mcp` package from `pkg/mcp` to root folder and `pkg/servers` package to `servers` package to simplify import paths. The `pkg` directory added unnecessary nesting and noise in import paths (e.g., from `github.com/TangGee/go-mcp/pkg/mcp` to `github.com/TangGee/go-mcp`, and from `github.com/TangGee/go-mcp/pkg/servers` to `github.com/TangGee/go-mcp/servers`).
 - Split `Transport` interface into `ServerTransport` and `ClientTransport` interfaces. `ClientTransport` doesn't need session-based messages as `Client` would just use one `Session` in its lifecycle.
 - Use iterator pattern for sessions in `ServerTransport` and messages in `ClientTransport`.
 - Use iterator pattern for streaming logs in `LogHandler`.

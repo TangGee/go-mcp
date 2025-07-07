@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MegaGrindStone/go-mcp"
+	"github.com/TangGee/go-mcp"
 )
 
 var toolList = mcp.ListToolsResult{

@@ -1,9 +1,9 @@
 # go-mcp
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/MegaGrindStone/go-mcp.svg)](https://pkg.go.dev/github.com/MegaGrindStone/go-mcp)
-![CI](https://github.com/MegaGrindStone/go-mcp/actions/workflows/ci.yml/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/MegaGrindStone/go-mcp)](https://goreportcard.com/report/github.com/MegaGrindStone/go-mcp)
-[![codecov](https://codecov.io/gh/MegaGrindStone/go-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/MegaGrindStone/go-mcp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/TangGee/go-mcp.svg)](https://pkg.go.dev/github.com/TangGee/go-mcp)
+![CI](https://github.com/TangGee/go-mcp/actions/workflows/ci.yml/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TangGee/go-mcp)](https://goreportcard.com/report/github.com/TangGee/go-mcp)
+[![codecov](https://codecov.io/gh/TangGee/go-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/TangGee/go-mcp)
 
 A Go implementation of the Model Context Protocol (MCP) - an open protocol that enables seamless integration between LLM applications and external data sources and tools.
 
@@ -42,7 +42,7 @@ This repository provides a Go library implementing the Model Context Protocol (M
 ## Installation
 
 ```bash
-go get github.com/MegaGrindStone/go-mcp
+go get github.com/TangGee/go-mcp
 ```
 
 ## Usage
